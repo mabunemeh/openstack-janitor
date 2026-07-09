@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openstack-janitor"
+version = "0.0.1"
+description = "Audit an OpenStack cloud for orphaned and wasteful resources"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [
+    { name = "Mohammad AbuNemeh", email = "mabunemeh@gmail.com" },
+]
+dependencies = [
+    "openstacksdk>=3.0",
+    "typer>=0.12",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+]
+
+[project.scripts]
+janitor = "openstack_janitor.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openstack_janitor"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=openstack_janitor --cov-report=term-missing --cov-fail-under=80"
