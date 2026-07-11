@@ -4,8 +4,8 @@
 
 A CLI that audits an OpenStack cloud for orphaned and wasteful resources.
 
-**Status: early development.** The first detector (unattached volumes) is
-working; more detectors and a `clean` command are coming — see
+**Status: early development.** Three detectors are working — see
+[Detectors](#detectors); more detectors and a `clean` command are coming — see
 [Roadmap](#roadmap).
 
 ## Install
@@ -26,7 +26,7 @@ release are planned once there's more than one detector.
 ```sh
 janitor audit
 janitor audit --cloud my-cloud
-janitor audit --detector unattached-volumes
+janitor audit --detector unattached-volumes --detector orphaned-ports
 ```
 
 Example output when orphaned volumes are found:
@@ -35,7 +35,7 @@ Example output when orphaned volumes are found:
 $ janitor audit --cloud my-cloud
               openstack-janitor findings
 ┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Detector/Type ┃ ID        ┃ Name    ┃ Project ┃ Reason                       ┃
+┃ Type          ┃ ID        ┃ Name    ┃ Project ┃ Reason                       ┃
 ┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
 │ volume        │ a1b2c3d4… │ old-db  │ proj-1  │ volume is unattached         │
 │               │           │         │         │ (status=available)          │
@@ -48,6 +48,16 @@ $ echo $?
 reported (so it's safe to wire into a cron job or CI check), `2` if an
 unknown `--detector` name is given, and `3` if connecting to the cloud
 fails.
+
+## Detectors
+
+| Name | Flags |
+| --- | --- |
+| `unattached-volumes` | Volumes in `available` status with no attachments. |
+| `unassociated-floating-ips` | Floating IPs not associated with any port. |
+| `orphaned-ports` | Ports with no device owner and no device id. Infrastructure ports (DHCP, routers, load balancer VIPs) always carry one of these, so they are never flagged; a pre-created port awaiting attachment will be. |
+
+All detectors are read-only.
 
 ## Authentication
 
@@ -65,8 +75,8 @@ for the full resolution order and file locations.
 
 ## Roadmap
 
-- More detectors: floating IPs, unused ports, orphaned snapshots, long-shutoff
-  instances, unused security groups.
+- More detectors: orphaned snapshots, long-shutoff instances, unused security
+  groups.
 - A `clean` command with a `--dry-run` default and explicit `--yes` to act.
 - `janitor.toml` for per-cloud configuration (which detectors run, age
   thresholds, exclusions).
