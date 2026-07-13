@@ -15,6 +15,8 @@ import pytest
 VolumeFactory = Callable[..., SimpleNamespace]
 FloatingIpFactory = Callable[..., SimpleNamespace]
 PortFactory = Callable[..., SimpleNamespace]
+SnapshotFactory = Callable[..., SimpleNamespace]
+ServerFactory = Callable[..., SimpleNamespace]
 
 
 @pytest.fixture
@@ -73,10 +75,48 @@ def fake_port() -> PortFactory:
 
 
 @pytest.fixture
+def fake_snapshot() -> SnapshotFactory:
+    """Factory building fake openstacksdk snapshot resources with sane defaults."""
+
+    def _make(**overrides: Any) -> SimpleNamespace:
+        defaults = {
+            "id": "snap-0001",
+            "name": "test-snapshot",
+            "created_at": "2026-01-01T00:00:00Z",
+            "volume_id": "vol-0001",
+            "project_id": "project-0001",
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    return _make
+
+
+@pytest.fixture
+def fake_server() -> ServerFactory:
+    """Factory building fake openstacksdk server resources with sane defaults."""
+
+    def _make(**overrides: Any) -> SimpleNamespace:
+        defaults = {
+            "id": "srv-0001",
+            "name": "test-server",
+            "status": "SHUTOFF",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "project_id": "project-0001",
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    return _make
+
+
+@pytest.fixture
 def fake_conn() -> MagicMock:
     """A MagicMock standing in for an openstack.connection.Connection."""
     conn = MagicMock()
     conn.block_storage.volumes.return_value = []
+    conn.block_storage.snapshots.return_value = []
     conn.network.ips.return_value = []
     conn.network.ports.return_value = []
+    conn.compute.servers.return_value = []
     return conn
