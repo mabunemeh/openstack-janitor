@@ -4,7 +4,7 @@
 
 A CLI that audits an OpenStack cloud for orphaned and wasteful resources.
 
-**Status: early development.** Three detectors are working — see
+**Status: early development.** Five detectors are working — see
 [Detectors](#detectors); more detectors and a `clean` command are coming — see
 [Roadmap](#roadmap).
 
@@ -56,8 +56,12 @@ fails.
 | `unattached-volumes` | Volumes in `available` status with no attachments. |
 | `unassociated-floating-ips` | Floating IPs not associated with any port. |
 | `orphaned-ports` | Ports with no device owner and no device id. Infrastructure ports (DHCP, routers, load balancer VIPs) always carry one of these, so they are never flagged; a pre-created port awaiting attachment will be. |
+| `old-snapshots` | Volume snapshots older than a threshold (default 90 days). |
+| `shutoff-instances` | Instances in `SHUTOFF` status whose last update is older than a threshold (default 30 days). There is no "shutoff since" field in the Compute API, so the age is a conservative lower bound — the detector may under-report but never over-reports. |
 
-All detectors are read-only.
+All detectors are read-only. Resources without a parseable timestamp are never
+flagged by the age-based detectors. Thresholds become configurable once
+`janitor.toml` support lands (see [Roadmap](#roadmap)).
 
 ## Authentication
 
@@ -75,8 +79,7 @@ for the full resolution order and file locations.
 
 ## Roadmap
 
-- More detectors: orphaned snapshots, long-shutoff instances, unused security
-  groups.
+- More detectors: unused security groups.
 - A `clean` command with a `--dry-run` default and explicit `--yes` to act.
 - `janitor.toml` for per-cloud configuration (which detectors run, age
   thresholds, exclusions).
