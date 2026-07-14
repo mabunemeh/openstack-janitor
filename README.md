@@ -20,6 +20,15 @@ pipx install openstack-janitor   # recommended for CLI use
 pip install openstack-janitor
 ```
 
+Standalone Linux binary — no Python needed at all. Built against glibc 2.28,
+so it runs on RHEL 8-era hosts whose system Python is too old for the package:
+
+```sh
+curl -LO https://github.com/mabunemeh/openstack-janitor/releases/latest/download/janitor-linux-x86_64
+chmod +x janitor-linux-x86_64
+./janitor-linux-x86_64 audit --cloud my-cloud
+```
+
 From source:
 
 ```sh
