@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openstack-janitor"
-version = "0.0.1"
+version = "0.1.0"
 description = "Audit an OpenStack cloud for orphaned and wasteful resources"
 readme = "README.md"
 requires-python = ">=3.11"
