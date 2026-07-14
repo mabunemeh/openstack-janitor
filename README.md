@@ -4,7 +4,7 @@
 
 A CLI that audits an OpenStack cloud for orphaned and wasteful resources.
 
-**Status: early development.** Five detectors are working — see
+**Status: early development.** Six detectors are working — see
 [Detectors](#detectors); more detectors and a `clean` command are coming — see
 [Roadmap](#roadmap).
 
@@ -27,7 +27,12 @@ release are planned once there's more than one detector.
 janitor audit
 janitor audit --cloud my-cloud
 janitor audit --detector unattached-volumes --detector orphaned-ports
+janitor audit --format json > findings.json
+janitor audit --format html > report.html
 ```
+
+`--format table` (the default) prints a rich table; `json` and `html` write
+machine-readable / shareable reports to stdout.
 
 Example output when orphaned volumes are found:
 
@@ -58,6 +63,7 @@ fails.
 | `orphaned-ports` | Ports with no device owner and no device id. Infrastructure ports (DHCP, routers, load balancer VIPs) always carry one of these, so they are never flagged; a pre-created port awaiting attachment will be. |
 | `old-snapshots` | Volume snapshots older than a threshold (default 90 days). |
 | `shutoff-instances` | Instances in `SHUTOFF` status whose last update is older than a threshold (default 30 days). There is no "shutoff since" field in the Compute API, so the age is a conservative lower bound — the detector may under-report but never over-reports. |
+| `unused-security-groups` | Security groups not attached to any port and not referenced as a `remote_group_id` by any rule. The per-project `default` group is always skipped. |
 
 All detectors are read-only. Resources without a parseable timestamp are never
 flagged by the age-based detectors. Thresholds become configurable once
@@ -79,10 +85,8 @@ for the full resolution order and file locations.
 
 ## Roadmap
 
-- More detectors: unused security groups.
 - A `clean` command with a `--dry-run` default and explicit `--yes` to act.
 - `janitor.toml` for per-cloud configuration (which detectors run, age
   thresholds, exclusions).
 - Safety rails: tagging/exclusion lists so resources can be marked "do not
   touch" before `clean` ever deletes anything.
-- JSON/HTML report output.
