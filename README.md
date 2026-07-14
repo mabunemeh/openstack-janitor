@@ -10,6 +10,8 @@ A CLI that audits an OpenStack cloud for orphaned and wasteful resources.
 
 ## Install
 
+Requires Python **3.11+**.
+
 From [PyPI](https://pypi.org/project/openstack-janitor/):
 
 ```sh
@@ -25,6 +27,12 @@ git clone https://github.com/mabunemeh/openstack-janitor
 cd openstack-janitor
 pip install -e .
 ```
+
+> **Older distros (e.g. Ubuntu 22.04):** the system Python is older than 3.11,
+> and the distro-patched pip can fail with `No module named
+> 'packaging.licenses'` while building the metadata. Install a newer Python
+> (deadsnakes PPA, `uv python install`, or pyenv) and use a fresh venv with an
+> upgraded pip.
 
 ## Usage
 
