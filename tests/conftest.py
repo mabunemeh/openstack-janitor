@@ -17,6 +17,7 @@ FloatingIpFactory = Callable[..., SimpleNamespace]
 PortFactory = Callable[..., SimpleNamespace]
 SnapshotFactory = Callable[..., SimpleNamespace]
 ServerFactory = Callable[..., SimpleNamespace]
+SecurityGroupFactory = Callable[..., SimpleNamespace]
 
 
 @pytest.fixture
@@ -111,6 +112,23 @@ def fake_server() -> ServerFactory:
 
 
 @pytest.fixture
+def fake_security_group() -> SecurityGroupFactory:
+    """Factory building fake openstacksdk security group resources with sane defaults."""
+
+    def _make(**overrides: Any) -> SimpleNamespace:
+        defaults = {
+            "id": "sg-0001",
+            "name": "test-sg",
+            "project_id": "project-0001",
+            "security_group_rules": [],
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    return _make
+
+
+@pytest.fixture
 def fake_conn() -> MagicMock:
     """A MagicMock standing in for an openstack.connection.Connection."""
     conn = MagicMock()
@@ -118,5 +136,6 @@ def fake_conn() -> MagicMock:
     conn.block_storage.snapshots.return_value = []
     conn.network.ips.return_value = []
     conn.network.ports.return_value = []
+    conn.network.security_groups.return_value = []
     conn.compute.servers.return_value = []
     return conn

@@ -9,6 +9,7 @@ from openstack_janitor.detectors.base import Detector, Finding
 from openstack_janitor.detectors.floating_ips import UnassociatedFloatingIpsDetector
 from openstack_janitor.detectors.instances import ShutoffInstancesDetector
 from openstack_janitor.detectors.ports import OrphanedPortsDetector
+from openstack_janitor.detectors.security_groups import UnusedSecurityGroupsDetector
 from openstack_janitor.detectors.snapshots import OldSnapshotsDetector
 from openstack_janitor.detectors.volumes import UnattachedVolumesDetector
 
@@ -18,6 +19,7 @@ ALL_DETECTORS: list[type[Detector]] = [
     OrphanedPortsDetector,
     OldSnapshotsDetector,
     ShutoffInstancesDetector,
+    UnusedSecurityGroupsDetector,
 ]
 
 
