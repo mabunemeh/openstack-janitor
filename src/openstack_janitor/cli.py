@@ -16,6 +16,7 @@ from openstack_janitor.reporting import print_findings, render_html, render_json
 app = typer.Typer(
     help="Audit an OpenStack cloud for orphaned and wasteful resources.",
     no_args_is_help=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
 console = Console()
 error_console = Console(stderr=True)
@@ -44,16 +45,19 @@ def audit(
     cloud: Optional[str] = typer.Option(
         None,
         "--cloud",
+        "-c",
         help="Named cloud from clouds.yaml (default: resolved from OS_CLOUD / OS_* env vars).",
     ),
     detector: Optional[list[str]] = typer.Option(
         None,
         "--detector",
+        "-d",
         help="Run only this detector (repeatable). Default: run all registered detectors.",
     ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.table,
         "--format",
+        "-f",
         help="Output format: table for humans, json/html for reports or piping.",
     ),
 ) -> None:

@@ -73,6 +73,39 @@ def test_audit_unknown_detector_exits_two() -> None:
     assert result.exit_code == 2
 
 
+def test_audit_short_options() -> None:
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()) as mock_conn,
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            return_value=[
+                FakeDetector("unattached-volumes"),
+                FakeDetector("orphaned-ports"),
+            ],
+        ),
+    ):
+        result = runner.invoke(
+            app,
+            ["audit", "-c", "my-cloud", "-d", "unattached-volumes", "-f", "json"],
+        )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == []
+    mock_conn.assert_called_once_with("my-cloud")
+
+
+def test_audit_help_short_option() -> None:
+    result = runner.invoke(app, ["audit", "-h"])
+
+    assert result.exit_code == 0
+    assert "-c" in result.stdout
+    assert "--cloud" in result.stdout
+    assert "-d" in result.stdout
+    assert "--detector" in result.stdout
+    assert "-f" in result.stdout
+    assert "--format" in result.stdout
+
+
 def test_audit_sdk_exception_exits_three() -> None:
     with (
         patch("openstack_janitor.cli.get_connection", side_effect=SDKException("auth failed")),

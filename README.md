@@ -48,11 +48,13 @@ pip install -e .
 
 ```sh
 janitor audit
-janitor audit --cloud my-cloud
-janitor audit --detector unattached-volumes --detector orphaned-ports
-janitor audit --format json > findings.json
-janitor audit --format html > report.html
+janitor audit -c my-cloud
+janitor audit -d unattached-volumes -d orphaned-ports
+janitor audit -f json > findings.json
+janitor audit -f html > report.html
 ```
+
+Short options: `-c` / `--cloud`, `-d` / `--detector`, `-f` / `--format`, `-h` / `--help`.
 
 `--format table` (the default) prints a rich table; `json` and `html` write
 machine-readable / shareable reports to stdout.
