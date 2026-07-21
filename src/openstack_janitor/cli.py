@@ -8,6 +8,7 @@ from typing import Optional
 import typer
 from openstack.exceptions import SDKException
 from rich.console import Console
+from rich.table import Table
 
 from openstack_janitor.connection import get_connection
 from openstack_janitor.detectors import get_detectors
@@ -35,9 +36,20 @@ def callback() -> None:
     """Audit an OpenStack cloud for orphaned and wasteful resources.
 
     A no-op callback: its only purpose is to keep Typer in "subcommand" mode
-    (`janitor audit ...`) instead of collapsing to a single implicit command,
-    since there is currently only one subcommand registered.
+    (`janitor audit ...`, `janitor detectors`) instead of collapsing to a
+    single implicit command.
     """
+
+
+@app.command()
+def detectors() -> None:
+    """List registered detectors and their descriptions."""
+    table = Table(title="Registered detectors")
+    table.add_column("Name", style="cyan")
+    table.add_column("Description")
+    for det in get_detectors():
+        table.add_row(det.name, det.description)
+    console.print(table)
 
 
 @app.command()

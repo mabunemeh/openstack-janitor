@@ -47,6 +47,7 @@ pip install -e .
 ## Usage
 
 ```sh
+janitor detectors
 janitor audit
 janitor audit -c my-cloud
 janitor audit -d unattached-volumes -d orphaned-ports
@@ -55,6 +56,10 @@ janitor audit -f html > report.html
 ```
 
 Short options: `-c` / `--cloud`, `-d` / `--detector`, `-f` / `--format`, `-h` / `--help`.
+
+`janitor detectors` lists every registered detector (name and description)
+without connecting to a cloud. Use the names it prints with
+`audit --detector`.
 
 `--format table` (the default) prints a rich table; `json` and `html` write
 machine-readable / shareable reports to stdout.
