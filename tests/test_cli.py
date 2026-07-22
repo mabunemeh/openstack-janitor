@@ -205,3 +205,27 @@ def test_audit_unknown_format_exits_nonzero() -> None:
         result = runner.invoke(app, ["audit", "--format", "xml"])
 
     assert result.exit_code == 2
+
+
+def test_detectors_lists_name_and_description() -> None:
+    with patch(
+        "openstack_janitor.cli.get_detectors",
+        return_value=[
+            FakeDetector("unattached-volumes"),
+            FakeDetector("orphaned-ports"),
+        ],
+    ):
+        result = runner.invoke(app, ["detectors"])
+
+    assert result.exit_code == 0
+    assert "unattached-volumes" in result.stdout
+    assert "orphaned-ports" in result.stdout
+    assert "fake detector unattached-volumes" in result.stdout
+    assert "fake detector orphaned-ports" in result.stdout
+
+
+def test_detectors_shows_live_registry() -> None:
+    result = runner.invoke(app, ["detectors"])
+
+    assert result.exit_code == 0
+    assert "unattached-volumes" in result.stdout
