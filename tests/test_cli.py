@@ -6,6 +6,7 @@ import json
 import re
 from unittest.mock import MagicMock, patch
 
+from keystoneauth1.exceptions import ConnectFailure
 from openstack.exceptions import SDKException
 from typer.testing import CliRunner
 
@@ -133,6 +134,45 @@ def test_audit_sdk_exception_exits_three() -> None:
         result = runner.invoke(app, ["audit"])
 
     assert result.exit_code == 3
+
+
+def test_audit_connect_failure_exits_three() -> None:
+    """keystoneauth1 errors are not SDKException, but must still exit 3.
+
+    Unreachable cloud, DNS failure and bad credentials all surface as
+    keystoneauth1.exceptions.ClientException subclasses, which openstacksdk
+    does not wrap -- catching only SDKException let the single most common
+    real-world failure escape as an unhandled traceback with exit code 1.
+    """
+    with (
+        patch(
+            "openstack_janitor.cli.get_connection",
+            side_effect=ConnectFailure("Unable to establish connection"),
+        ),
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            return_value=[FakeDetector("unattached-volumes")],
+        ),
+    ):
+        result = runner.invoke(app, ["audit"])
+
+    assert result.exit_code == 3
+    assert "Failed to connect to OpenStack cloud" in _strip_ansi(result.output)
+
+
+def test_audit_scan_connect_failure_exits_three() -> None:
+    """A keystoneauth1 failure mid-scan (expired token) must also exit 3."""
+    det = FakeDetector("unattached-volumes")
+    det.detect = MagicMock(side_effect=ConnectFailure("connection reset"))  # type: ignore[method-assign]
+
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch("openstack_janitor.cli.get_detectors", return_value=[det]),
+    ):
+        result = runner.invoke(app, ["audit"])
+
+    assert result.exit_code == 3
+    assert "Failed to scan the cloud for resources" in _strip_ansi(result.output)
 
 
 def test_audit_format_json_with_findings_parses_and_exits_one() -> None:

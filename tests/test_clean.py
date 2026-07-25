@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from keystoneauth1.exceptions import ConnectFailure
 from openstack.exceptions import SDKException
 from typer.testing import CliRunner
 
@@ -318,6 +319,39 @@ def test_clean_connection_sdk_exception_exits_three() -> None:
 def test_clean_detect_failure_deletes_nothing_and_exits_three() -> None:
     det = FakeDetector("unattached-volumes")
     det.detect = MagicMock(side_effect=SDKException("compute unreachable"))  # type: ignore[method-assign]
+
+    result = _run(["clean", "-d", "unattached-volumes", "--yes"], [det])
+
+    assert result.exit_code == 3
+    assert det.cleaned == []
+
+
+def test_clean_connect_failure_exits_three() -> None:
+    """keystoneauth1 errors are not SDKException, but must still exit 3.
+
+    Unreachable cloud, DNS failure and bad credentials all surface as
+    keystoneauth1.exceptions.ClientException subclasses, which openstacksdk
+    does not wrap -- catching only SDKException let them escape as an
+    unhandled traceback with exit code 1.
+    """
+    det = FakeDetector("unattached-volumes", [_finding()])
+    with (
+        patch(
+            "openstack_janitor.cli.get_connection",
+            side_effect=ConnectFailure("Unable to establish connection"),
+        ),
+        patch("openstack_janitor.cli.get_detectors", return_value=[det]),
+    ):
+        result = runner.invoke(app, ["clean", "-d", "unattached-volumes", "--yes"])
+
+    assert result.exit_code == 3
+    assert det.cleaned == []
+
+
+def test_clean_detect_connect_failure_deletes_nothing_and_exits_three() -> None:
+    """A keystoneauth1 failure during detection must still delete nothing."""
+    det = FakeDetector("unattached-volumes", [_finding()])
+    det.detect = MagicMock(side_effect=ConnectFailure("connection reset"))  # type: ignore[method-assign]
 
     result = _run(["clean", "-d", "unattached-volumes", "--yes"], [det])
 

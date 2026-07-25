@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Optional
 
 import typer
+from keystoneauth1.exceptions import ClientException as KeystoneAuthException
 from openstack.exceptions import SDKException
 from rich.console import Console
 from rich.markup import escape
@@ -21,6 +22,15 @@ from openstack_janitor.reporting import (
     render_html,
     render_json,
 )
+
+# Talking to a cloud can fail in two disjoint exception trees: openstacksdk
+# raises SDKException, but authentication and transport live one layer down in
+# keystoneauth1, whose ClientException (ConnectFailure, Unauthorized,
+# DiscoveryFailure, ...) is *not* a subclass of SDKException. The most common
+# real-world failures -- unreachable cloud, DNS failure, bad credentials --
+# come from keystoneauth1, so both trees must be caught or they escape as an
+# unhandled traceback instead of the documented exit code 3.
+CLOUD_ERRORS = (SDKException, KeystoneAuthException)
 
 app = typer.Typer(
     help="Audit an OpenStack cloud for orphaned and wasteful resources.",
@@ -129,7 +139,7 @@ def audit(
 
     try:
         conn = get_connection(cloud)
-    except SDKException as exc:
+    except CLOUD_ERRORS as exc:
         error_console.print(f"[red]Failed to connect to OpenStack cloud: {escape(str(exc))}[/red]")
         raise typer.Exit(code=3) from exc
 
@@ -137,7 +147,7 @@ def audit(
         findings = []
         for det in selected:
             findings.extend(det.detect(conn))
-    except SDKException as exc:
+    except CLOUD_ERRORS as exc:
         error_console.print(
             f"[red]Failed to scan the cloud for resources: {escape(str(exc))}[/red]"
         )
@@ -233,8 +243,8 @@ def clean(
 
     try:
         conn = get_connection(cloud)
-    except SDKException as exc:
-        error_console.print(f"[red]Failed to connect to OpenStack cloud: {exc}[/red]")
+    except CLOUD_ERRORS as exc:
+        error_console.print(f"[red]Failed to connect to OpenStack cloud: {escape(str(exc))}[/red]")
         raise typer.Exit(code=3) from exc
 
     try:
@@ -242,8 +252,10 @@ def clean(
         findings_by_detector: list[tuple[Detector, list[Finding]]] = [
             (det, det.detect(conn)) for det in selected
         ]
-    except SDKException as exc:
-        error_console.print(f"[red]Failed to scan the cloud for resources: {exc}[/red]")
+    except CLOUD_ERRORS as exc:
+        error_console.print(
+            f"[red]Failed to scan the cloud for resources: {escape(str(exc))}[/red]"
+        )
         raise typer.Exit(code=3) from exc
 
     # A keep-list entry that matches nothing is almost always a typo (or a
