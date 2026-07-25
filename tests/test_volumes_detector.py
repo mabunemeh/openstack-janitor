@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from openstack.exceptions import ForbiddenException
 
+from openstack_janitor.detectors.base import Finding
 from openstack_janitor.detectors.volumes import UnattachedVolumesDetector
 
 
@@ -70,3 +71,17 @@ def test_name_none_is_handled(fake_conn, fake_volume) -> None:
 
     assert len(findings) == 1
     assert findings[0].resource_name == ""
+
+
+def test_clean_deletes_volume_by_id(fake_conn) -> None:
+    finding = Finding(
+        resource_type="volume",
+        resource_id="vol-0001",
+        resource_name="test-volume",
+        project_id="project-0001",
+        reason="volume is unattached (status=available)",
+    )
+
+    UnattachedVolumesDetector().clean(fake_conn, finding)
+
+    fake_conn.block_storage.delete_volume.assert_called_once_with("vol-0001", ignore_missing=True)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from openstack_janitor.detectors.base import Finding
 from openstack_janitor.detectors.ports import OrphanedPortsDetector
 
 
@@ -57,3 +58,17 @@ def test_extra_contains_network_id(fake_conn, fake_port) -> None:
 
     assert len(findings) == 1
     assert findings[0].extra == {"network_id": "net-9999"}
+
+
+def test_clean_deletes_port_by_id(fake_conn) -> None:
+    finding = Finding(
+        resource_type="port",
+        resource_id="port-0001",
+        resource_name="test-port",
+        project_id="project-0001",
+        reason="port has no device owner or device id",
+    )
+
+    OrphanedPortsDetector().clean(fake_conn, finding)
+
+    fake_conn.network.delete_port.assert_called_once_with("port-0001", ignore_missing=True)

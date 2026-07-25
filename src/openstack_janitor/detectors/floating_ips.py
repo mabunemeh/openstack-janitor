@@ -40,3 +40,6 @@ class UnassociatedFloatingIpsDetector(Detector):
                 )
             )
         return findings
+
+    def clean(self, conn: Connection, finding: Finding) -> None:
+        conn.network.delete_ip(finding.resource_id, ignore_missing=True)

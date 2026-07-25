@@ -56,3 +56,6 @@ class OldSnapshotsDetector(Detector):
                 )
             )
         return findings
+
+    def clean(self, conn: Connection, finding: Finding) -> None:
+        conn.block_storage.delete_snapshot(finding.resource_id, ignore_missing=True)

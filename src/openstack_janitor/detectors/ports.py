@@ -44,3 +44,6 @@ class OrphanedPortsDetector(Detector):
                 )
             )
         return findings
+
+    def clean(self, conn: Connection, finding: Finding) -> None:
+        conn.network.delete_port(finding.resource_id, ignore_missing=True)

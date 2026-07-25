@@ -69,3 +69,6 @@ class ShutoffInstancesDetector(Detector):
                 )
             )
         return findings
+
+    def clean(self, conn: Connection, finding: Finding) -> None:
+        conn.compute.delete_server(finding.resource_id, ignore_missing=True)

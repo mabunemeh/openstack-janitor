@@ -172,3 +172,6 @@ class OrphanSnapshotImagesDetector(Detector):
                 )
             )
         return findings
+
+    def clean(self, conn: Connection, finding: Finding) -> None:
+        conn.image.delete_image(finding.resource_id, ignore_missing=True)

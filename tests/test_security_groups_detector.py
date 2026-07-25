@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from openstack_janitor.detectors.base import Finding
 from openstack_janitor.detectors.security_groups import UnusedSecurityGroupsDetector
 
 
@@ -103,3 +104,17 @@ def test_name_none_is_handled(fake_conn, fake_security_group) -> None:
 
     assert len(findings) == 1
     assert findings[0].resource_name == ""
+
+
+def test_clean_deletes_security_group_by_id(fake_conn) -> None:
+    finding = Finding(
+        resource_type="security-group",
+        resource_id="sg-0001",
+        resource_name="test-sg",
+        project_id="project-0001",
+        reason="security group is not attached to any port or referenced by any rule",
+    )
+
+    UnusedSecurityGroupsDetector().clean(fake_conn, finding)
+
+    fake_conn.network.delete_security_group.assert_called_once_with("sg-0001", ignore_missing=True)

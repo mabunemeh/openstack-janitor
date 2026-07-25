@@ -69,3 +69,6 @@ class UnusedSecurityGroupsDetector(Detector):
                 )
             )
         return findings
+
+    def clean(self, conn: Connection, finding: Finding) -> None:
+        conn.network.delete_security_group(finding.resource_id, ignore_missing=True)

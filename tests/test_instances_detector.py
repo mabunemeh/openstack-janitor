@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from openstack.exceptions import ForbiddenException
 
+from openstack_janitor.detectors.base import Finding
 from openstack_janitor.detectors.instances import ShutoffInstancesDetector
 
 NOW = datetime(2026, 7, 13, tzinfo=timezone.utc)
@@ -83,3 +84,17 @@ def test_falls_back_when_all_projects_forbidden(fake_conn, fake_server) -> None:
     second_call_kwargs = fake_conn.compute.servers.call_args_list[1].kwargs
     assert first_call_kwargs.get("all_projects") is True
     assert "all_projects" not in second_call_kwargs
+
+
+def test_clean_deletes_server_by_id(fake_conn) -> None:
+    finding = Finding(
+        resource_type="instance",
+        resource_id="srv-0001",
+        resource_name="test-server",
+        project_id="project-0001",
+        reason="instance has been shutoff for at least 100 days (threshold 30)",
+    )
+
+    ShutoffInstancesDetector().clean(fake_conn, finding)
+
+    fake_conn.compute.delete_server.assert_called_once_with("srv-0001", ignore_missing=True)

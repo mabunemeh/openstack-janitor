@@ -34,3 +34,17 @@ class Detector(ABC):
     def detect(self, conn: Connection) -> list[Finding]:
         """Scan the cloud reachable via ``conn`` and return any findings."""
         raise NotImplementedError
+
+    def clean(self, conn: Connection, finding: Finding) -> None:
+        """Delete the resource named by `finding`.
+
+        Implementations must be idempotent (ignore an already-missing
+        resource) and must raise on real failures so the CLI can report them.
+
+        Deliberately concrete rather than abstract: a detector may be
+        audit-only (deletion unsafe or undefined for its resource), and
+        subclasses written outside this repo must not break just because
+        `clean` arrived. Not overriding it means `janitor clean` reports the
+        resource as unsupported instead of deleting it.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support clean")

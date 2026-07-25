@@ -37,3 +37,6 @@ class UnattachedVolumesDetector(Detector):
                 )
             )
         return findings
+
+    def clean(self, conn: Connection, finding: Finding) -> None:
+        conn.block_storage.delete_volume(finding.resource_id, ignore_missing=True)

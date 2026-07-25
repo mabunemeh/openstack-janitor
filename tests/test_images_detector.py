@@ -6,6 +6,7 @@ import json
 
 from openstack.exceptions import ForbiddenException, NotFoundException
 
+from openstack_janitor.detectors.base import Finding
 from openstack_janitor.detectors.images import OrphanSnapshotImagesDetector
 
 
@@ -235,3 +236,17 @@ def test_name_none_and_owner_as_project_id(fake_conn, fake_image) -> None:
     assert len(findings) == 1
     assert findings[0].resource_name == ""
     assert findings[0].project_id == "proj-owner"
+
+
+def test_clean_deletes_image_by_id(fake_conn) -> None:
+    finding = Finding(
+        resource_type="image",
+        resource_id="img-0001",
+        resource_name="test-image",
+        project_id="project-0001",
+        reason="image references missing snapshot(s): snap-gone",
+    )
+
+    OrphanSnapshotImagesDetector().clean(fake_conn, finding)
+
+    fake_conn.image.delete_image.assert_called_once_with("img-0001", ignore_missing=True)

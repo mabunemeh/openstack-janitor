@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from openstack_janitor.detectors.base import Finding
 from openstack_janitor.detectors.floating_ips import UnassociatedFloatingIpsDetector
 
 
@@ -67,3 +68,17 @@ def test_floating_ip_address_none_is_handled(fake_conn, fake_floating_ip) -> Non
 
     assert len(findings) == 1
     assert findings[0].resource_name == ""
+
+
+def test_clean_deletes_floating_ip_by_id(fake_conn) -> None:
+    finding = Finding(
+        resource_type="floating-ip",
+        resource_id="fip-0001",
+        resource_name="203.0.113.10",
+        project_id="project-0001",
+        reason="floating IP is not associated with any port",
+    )
+
+    UnassociatedFloatingIpsDetector().clean(fake_conn, finding)
+
+    fake_conn.network.delete_ip.assert_called_once_with("fip-0001", ignore_missing=True)
