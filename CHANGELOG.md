@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-24
+
+### Added
+
+- `janitor clean` — deletes the resources the detectors flag. **Dry run by
+  default**: without `--yes` nothing is touched, it only previews. Options:
+  `--cloud/-c`, `--detector/-d`, `--exclude/-e`, `--yes/-y`.
+- Safety behaviour built into `clean`:
+  - `--detector` is **required**, so one command can never delete across all
+    seven resource types at once.
+  - `--exclude` takes resource IDs and **aborts the run** if a value matches
+    no finding, so a typo cannot silently delete what it was meant to protect.
+  - Findings are re-detected immediately before acting; a scan failure deletes
+    nothing.
+  - Failures are isolated per resource, and the report is always printed —
+    including on Ctrl-C — so there is never a deletion without a record.
+  - A detector that does not implement deletion is reported as `unsupported`
+    rather than treated as deleted.
+- `Detector.clean` for each of the seven detectors, using `ignore_missing=True`
+  so a concurrently-deleted resource is a no-op.
+
+### Changed
+
+- Successful deletions report as `requested`, not `deleted`: OpenStack deletes
+  are asynchronous, so an accepted call means the delete is under way.
+- Terminal output escapes cloud-supplied text (resource names, IDs, error
+  messages), which previously could be parsed as terminal markup and abort the
+  report.
+- `audit` now distinguishes a connection failure from a scan failure in its
+  error message (both still exit 3).
+
 ## [0.2.0] - 2026-07-22
 
 ### Added
@@ -56,6 +87,7 @@ First release: the complete read-only audit story.
 - Non-admin fallback: detectors that use admin-only `all_projects` listings
   retry scoped to the caller's own project when forbidden.
 
+[0.3.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.2.0
 [0.1.1]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.1.1
 [0.1.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.1.0

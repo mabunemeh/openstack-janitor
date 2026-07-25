@@ -4,9 +4,9 @@
 
 A CLI that audits an OpenStack cloud for orphaned and wasteful resources.
 
-**Status: early development.** Seven detectors are working — see
-[Detectors](#detectors); more detectors and a `clean` command are coming — see
-[Roadmap](#roadmap).
+**Status: early development.** Seven detectors and a `clean` command are
+working — see [Detectors](#detectors) and [Cleaning](#cleaning); more
+detectors and safety rails are coming — see [Roadmap](#roadmap).
 
 ## Install
 
@@ -84,6 +84,51 @@ reported (so it's safe to wire into a cron job or CI check), `2` if an
 unknown `--detector` name is given, and `3` if connecting to the cloud
 fails.
 
+## Cleaning
+
+```sh
+janitor clean -d unattached-volumes                   # dry run: preview only, deletes nothing
+janitor clean -d unattached-volumes --yes             # delete what that detector flags
+janitor clean -d unattached-volumes -e vol-0001 --yes # keep specific resource IDs
+```
+
+`janitor clean` is **dry run by default** — it re-runs the detectors and shows
+what it *would* delete, but touches nothing. Pass `--yes` to actually delete.
+Deletes are real and irreversible: once a volume, snapshot, floating IP,
+port, security group, instance, or image is gone, it is gone.
+
+`--detector` is **required**. `clean` refuses to act on every detector at once,
+so a single command can never delete across all seven resource types.
+
+Read this before using `--yes`:
+
+- **Some detectors have no age threshold.** `orphaned-ports` and
+  `unused-security-groups` flag by state alone, so a port or group created
+  seconds ago — mid-provisioning, mid-CI-run — is a finding and will be
+  deleted. Until tag/age rails land, keep `--detector` narrow.
+- **The preview does not bind the execution.** Dry run and `--yes` are two
+  independent detection passes. A resource created in between is deleted
+  without ever having appeared in the table you reviewed.
+- **Cleaning can create new findings.** Deleting a shutoff instance leaves its
+  volumes unattached; deleting snapshots orphans the images built from them.
+  The next run will flag those. Re-read each dry run rather than looping
+  `--yes` blindly.
+- **`--exclude` takes resource IDs, not names.** An `--exclude` value that
+  matches no finding aborts the run rather than being ignored, so a typo
+  cannot silently delete what it was meant to protect.
+- **Deletes are asynchronous.** A successful call means the delete was
+  accepted; verify with `janitor audit` afterwards.
+
+Tag/age safety rails (e.g. a `janitor:keep` marker) are on the
+[roadmap](#roadmap) but not implemented yet.
+
+`janitor clean` exits `0` on a successful dry run or execute, `1` if any
+resource was not deleted during `--yes` — either the deletion failed or the
+detector does not support cleaning (other resources are still processed;
+failures are isolated per resource) — `2` for a missing or unknown
+`--detector` or an `--exclude` ID that matched nothing, and `3` if connecting
+to the cloud or scanning it fails.
+
 ## Detectors
 
 | Name | Flags |
@@ -96,8 +141,14 @@ fails.
 | `unused-security-groups` | Security groups not attached to any port and not referenced as a `remote_group_id` by any rule. The per-project `default` group is always skipped. |
 | `orphan-snapshot-images` | Glance images whose `block_device_mapping` references a Cinder volume snapshot that no longer exists. Includes hidden images. |
 
-All detectors are read-only. Resources without a parseable timestamp are never
-flagged by the age-based detectors. Thresholds become configurable once
+Detection is always read-only — `janitor audit` never modifies anything. The
+same detectors also know how to delete what they flag, but only
+[`janitor clean --yes`](#cleaning) ever does so.
+
+Resources without a parseable timestamp are never flagged by the age-based
+detectors. Note that `orphaned-ports` and `unused-security-groups` have no age
+threshold at all, so they can flag a resource created seconds ago — see the
+warning under [Cleaning](#cleaning). Thresholds become configurable once
 `janitor.toml` support lands (see [Roadmap](#roadmap)).
 
 ## Authentication
@@ -116,8 +167,8 @@ for the full resolution order and file locations.
 
 ## Roadmap
 
-- A `clean` command with a `--dry-run` default and explicit `--yes` to act.
 - `janitor.toml` for per-cloud configuration (which detectors run, age
   thresholds, exclusions).
-- Safety rails: tagging/exclusion lists so resources can be marked "do not
-  touch" before `clean` ever deletes anything.
+- Safety rails: a `janitor:keep` tag (or similar) so resources can be marked
+  "do not touch" before `clean` ever deletes anything, beyond today's
+  `--exclude` flag and dry-run review.
