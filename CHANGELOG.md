@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-07-25
+
+### Fixed
+
+- `audit` and `clean` now exit `3` with a readable error — instead of an
+  unhandled traceback and exit `1` — when the cloud is unreachable, DNS
+  resolution fails, credentials are wrong, or the token expires. These
+  failures are raised by keystoneauth1, whose exceptions are not
+  `SDKException` subclasses, so the existing handlers never caught them.
+  Affects 0.1.0 through 0.3.0.
+- `clean` escapes cloud-supplied text in its connection and scan error
+  messages, matching `audit`. A real DNS-failure message contains
+  `[Errno 11001]`, which was otherwise parsed as terminal markup.
+
+### Changed
+
+- `keystoneauth1` is now a declared dependency. It was already installed as a
+  transitive dependency of openstacksdk; the CLI imports it directly.
+
 ## [0.3.0] - 2026-07-24
 
 ### Added
@@ -87,6 +106,7 @@ First release: the complete read-only audit story.
 - Non-admin fallback: detectors that use admin-only `all_projects` listings
   retry scoped to the caller's own project when forbidden.
 
+[0.3.1]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.3.1
 [0.3.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.2.0
 [0.1.1]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.1.1
