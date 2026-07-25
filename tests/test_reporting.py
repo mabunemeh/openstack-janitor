@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 
+from rich.console import Console
+
 from openstack_janitor.detectors.base import Finding
-from openstack_janitor.reporting import render_html, render_json
+from openstack_janitor.reporting import print_clean_plan, render_html, render_json
 
 
 def _finding(**overrides: object) -> Finding:
@@ -67,3 +69,18 @@ def test_render_html_contains_all_five_field_values() -> None:
     assert finding.project_id in output
     assert finding.reason in output
     assert "<table" in output
+
+
+def test_print_clean_plan_no_actions_but_findings_detected_warns(capsys) -> None:
+    """An empty action list must never claim a clean cloud if findings existed."""
+    print_clean_plan([], Console(), executed=True, detected=3)
+
+    out = capsys.readouterr().out
+    assert "nothing to clean" not in out.lower()
+    assert "3 finding(s) were detected" in out
+
+
+def test_print_clean_plan_no_actions_and_nothing_detected_is_clean(capsys) -> None:
+    print_clean_plan([], Console(), executed=True, detected=0)
+
+    assert "nothing to clean" in capsys.readouterr().out.lower()
