@@ -19,6 +19,8 @@ class Finding:
     project_id: str
     reason: str
     extra: dict[str, str] = field(default_factory=dict)
+    detector: str = ""
+    """Kebab-case detector name that flagged this resource (set by audit)."""
 
 
 class Detector(ABC):

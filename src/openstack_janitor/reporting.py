@@ -30,9 +30,16 @@ class CleanAction:
     """
 
 
-def render_table(findings: list[Finding]) -> Table:
-    """Build a rich Table summarizing the given findings."""
+def render_table(findings: list[Finding], *, show_detector: bool = False) -> Table:
+    """Build a rich Table summarizing the given findings.
+
+    When ``show_detector`` is true, a Detector column is placed first so the
+    kebab-case name is easy to copy into ``janitor clean -d``.
+    """
     table = Table(title="openstack-janitor findings")
+    if show_detector:
+        # no_wrap: names must stay intact so they can be copied into clean -d.
+        table.add_column("Detector", style="magenta", no_wrap=True)
     table.add_column("Type", style="cyan")
     table.add_column("ID", style="dim")
     table.add_column("Name")
@@ -42,22 +49,30 @@ def render_table(findings: list[Finding]) -> Table:
     for finding in findings:
         # escape(): names/ids come from the cloud, and an unbalanced "[/red]"
         # in one would otherwise be parsed as rich markup and raise.
-        table.add_row(
-            escape(finding.resource_type),
-            escape(finding.resource_id),
-            escape(finding.resource_name),
-            escape(finding.project_id),
-            escape(finding.reason),
+        cells = []
+        if show_detector:
+            cells.append(escape(finding.detector))
+        cells.extend(
+            [
+                escape(finding.resource_type),
+                escape(finding.resource_id),
+                escape(finding.resource_name),
+                escape(finding.project_id),
+                escape(finding.reason),
+            ]
         )
+        table.add_row(*cells)
     return table
 
 
-def print_findings(findings: list[Finding], console: Console) -> None:
+def print_findings(
+    findings: list[Finding], console: Console, *, show_detector: bool = False
+) -> None:
     """Print findings as a table, or a clean-cloud message if there are none."""
     if not findings:
         console.print("[green]No findings — cloud looks clean.[/green]")
         return
-    console.print(render_table(findings))
+    console.print(render_table(findings, show_detector=show_detector))
 
 
 def render_json(findings: list[Finding]) -> str:
@@ -81,6 +96,7 @@ def render_html(findings: list[Finding]) -> str:
         for finding in findings:
             extra = ", ".join(f"{k}={v}" for k, v in finding.extra.items())
             cells = [
+                finding.detector,
                 finding.resource_type,
                 finding.resource_id,
                 finding.resource_name,
@@ -92,7 +108,7 @@ def render_html(findings: list[Finding]) -> str:
             rows.append(f"<tr>{row}</tr>")
         body = (
             "<table>\n"
-            "<tr><th>Type</th><th>ID</th><th>Name</th><th>Project</th>"
+            "<tr><th>Detector</th><th>Type</th><th>ID</th><th>Name</th><th>Project</th>"
             "<th>Reason</th><th>Extra</th></tr>\n" + "\n".join(rows) + "\n</table>"
         )
 

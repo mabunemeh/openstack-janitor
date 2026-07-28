@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from enum import Enum
 from typing import Optional
 
@@ -146,7 +147,8 @@ def audit(
     try:
         findings = []
         for det in selected:
-            findings.extend(det.detect(conn))
+            for finding in det.detect(conn):
+                findings.append(dataclasses.replace(finding, detector=det.name))
     except CLOUD_ERRORS as exc:
         error_console.print(
             f"[red]Failed to scan the cloud for resources: {escape(str(exc))}[/red]"
@@ -160,7 +162,8 @@ def audit(
     elif output_format is OutputFormat.html:
         print(render_html(findings))
     else:
-        print_findings(findings, console)
+        # Detector column is redundant when the user already narrowed to one -d.
+        print_findings(findings, console, show_detector=len(selected) != 1)
 
     raise typer.Exit(code=1 if findings else 0)
 

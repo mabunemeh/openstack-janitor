@@ -3,11 +3,24 @@
 from __future__ import annotations
 
 import json
+import re
 
 from rich.console import Console
 
 from openstack_janitor.detectors.base import Finding
-from openstack_janitor.reporting import print_clean_plan, render_html, render_json
+from openstack_janitor.reporting import (
+    print_clean_plan,
+    print_findings,
+    render_html,
+    render_json,
+    render_table,
+)
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 def _finding(**overrides: object) -> Finding:
@@ -18,6 +31,7 @@ def _finding(**overrides: object) -> Finding:
         "project_id": "project-0001",
         "reason": "security group is not attached to any port or referenced by any rule",
         "extra": {"rules_count": "2"},
+        "detector": "unused-security-groups",
     }
     defaults.update(overrides)
     return Finding(**defaults)  # type: ignore[arg-type]
@@ -35,6 +49,7 @@ def test_render_json_round_trips_with_extra() -> None:
     assert data[0]["project_id"] == "project-0001"
     assert data[0]["reason"] == finding.reason
     assert data[0]["extra"] == {"rules_count": "2"}
+    assert data[0]["detector"] == "unused-security-groups"
 
 
 def test_render_json_empty_findings() -> None:
@@ -58,17 +73,51 @@ def test_render_html_empty_findings_shows_no_findings_text() -> None:
     assert "<table" not in output
 
 
-def test_render_html_contains_all_five_field_values() -> None:
+def test_render_html_contains_all_field_values() -> None:
     finding = _finding()
 
     output = render_html([finding])
 
+    assert finding.detector in output
     assert finding.resource_type in output
     assert finding.resource_id in output
     assert finding.resource_name in output
     assert finding.project_id in output
     assert finding.reason in output
+    assert "<th>Detector</th>" in output
     assert "<table" in output
+
+
+def test_render_table_with_detector_column() -> None:
+    table = render_table([_finding()], show_detector=True)
+    console = Console(force_terminal=False, width=200)
+    with console.capture() as capture:
+        console.print(table)
+    out = _strip_ansi(capture.get())
+
+    assert "Detector" in out
+    assert "unused-security-groups" in out
+    assert "sg-0001" in out
+
+
+def test_render_table_without_detector_column() -> None:
+    table = render_table([_finding()], show_detector=False)
+    console = Console(force_terminal=False, width=200)
+    with console.capture() as capture:
+        console.print(table)
+    out = _strip_ansi(capture.get())
+
+    assert "Detector" not in out
+    assert "unused-security-groups" not in out
+    assert "sg-0001" in out
+
+
+def test_print_findings_forwards_show_detector(capsys) -> None:
+    console = Console(force_terminal=False, width=200)
+    print_findings([_finding()], console, show_detector=True)
+    out = _strip_ansi(capsys.readouterr().out)
+    assert "Detector" in out
+    assert "unused-security-groups" in out
 
 
 def test_print_clean_plan_no_actions_but_findings_detected_warns(capsys) -> None:

@@ -74,6 +74,106 @@ def test_audit_with_findings_exits_one_and_shows_table() -> None:
     assert result.exit_code == 1
     assert "vol-123" in result.stdout
     assert "orphan" in result.stdout
+    # Single registered detector → Detector column is hidden.
+    assert "Detector" not in _strip_ansi(result.stdout)
+
+
+def test_audit_multiple_detectors_shows_detector_column() -> None:
+    vol = Finding(
+        resource_type="volume",
+        resource_id="vol-123",
+        resource_name="orphan",
+        project_id="proj-1",
+        reason="volume is unattached (status=available)",
+    )
+    port = Finding(
+        resource_type="port",
+        resource_id="port-456",
+        resource_name="orphan-port",
+        project_id="proj-1",
+        reason="port is down and unattached",
+    )
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            return_value=[
+                FakeDetector("unattached-volumes", [vol]),
+                FakeDetector("orphaned-ports", [port]),
+            ],
+        ),
+    ):
+        result = runner.invoke(app, ["audit"])
+
+    out = _strip_ansi(result.stdout)
+    assert result.exit_code == 1
+    assert "Detector" in out
+    assert "unattached-volumes" in out
+    assert "orphaned-ports" in out
+
+
+def test_audit_single_detector_flag_hides_detector_column() -> None:
+    finding = Finding(
+        resource_type="volume",
+        resource_id="vol-123",
+        resource_name="orphan",
+        project_id="proj-1",
+        reason="volume is unattached (status=available)",
+    )
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            return_value=[
+                FakeDetector("unattached-volumes", [finding]),
+                FakeDetector("orphaned-ports"),
+            ],
+        ),
+    ):
+        result = runner.invoke(app, ["audit", "-d", "unattached-volumes"])
+
+    out = _strip_ansi(result.stdout)
+    assert result.exit_code == 1
+    assert "vol-123" in out
+    assert "Detector" not in out
+    assert "unattached-volumes" not in out
+
+
+def test_audit_two_detector_flags_shows_detector_column() -> None:
+    vol = Finding(
+        resource_type="volume",
+        resource_id="vol-123",
+        resource_name="orphan",
+        project_id="proj-1",
+        reason="volume is unattached (status=available)",
+    )
+    port = Finding(
+        resource_type="port",
+        resource_id="port-456",
+        resource_name="orphan-port",
+        project_id="proj-1",
+        reason="port is down and unattached",
+    )
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            return_value=[
+                FakeDetector("unattached-volumes", [vol]),
+                FakeDetector("orphaned-ports", [port]),
+            ],
+        ),
+    ):
+        result = runner.invoke(
+            app,
+            ["audit", "-d", "unattached-volumes", "-d", "orphaned-ports"],
+        )
+
+    out = _strip_ansi(result.stdout)
+    assert result.exit_code == 1
+    assert "Detector" in out
+    assert "unattached-volumes" in out
+    assert "orphaned-ports" in out
 
 
 def test_audit_unknown_detector_exits_two() -> None:
@@ -197,6 +297,7 @@ def test_audit_format_json_with_findings_parses_and_exits_one() -> None:
     assert len(data) == 1
     assert data[0]["resource_id"] == "vol-123"
     assert data[0]["resource_type"] == "volume"
+    assert data[0]["detector"] == "unattached-volumes"
 
 
 def test_audit_format_json_no_findings_exits_zero_with_empty_array() -> None:
@@ -232,6 +333,8 @@ def test_audit_format_html_with_findings_contains_table() -> None:
 
     assert result.exit_code == 1
     assert "<table" in result.stdout
+    assert "<th>Detector</th>" in result.stdout
+    assert "unattached-volumes" in result.stdout
 
 
 def test_audit_unknown_format_exits_nonzero() -> None:
