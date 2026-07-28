@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from enum import Enum
 from typing import Optional
 
@@ -84,6 +85,11 @@ def _supports_clean(det: Detector) -> bool:
     """
     method = getattr(det.clean, "__func__", det.clean)
     return method is not Detector.clean
+
+
+def _can_prompt() -> bool:
+    """Whether stdin can accept an interactive confirmation prompt."""
+    return sys.stdin.isatty()
 
 
 @app.callback()
@@ -191,22 +197,32 @@ def clean(
             "An ID that matches nothing is an error, so typos cannot silently delete."
         ),
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        "--dry",
+        help="Preview what would be deleted and exit without prompting or deleting.",
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
         "-y",
         help=(
-            "Actually delete flagged resources. Without this flag (the default), "
-            "clean only previews what would be deleted -- nothing is touched."
+            "Delete without asking for confirmation. Without this flag, clean prints "
+            "the plan and prompts before deleting (unless --dry-run)."
         ),
     ),
 ) -> None:
     """Delete resources flagged by the given detectors.
 
-    WARNING: this is destructive. With --yes, it deletes real cloud
-    resources, and deletes are irreversible. Dry run (the default, no
-    --yes) never deletes anything -- it only previews what would be
-    deleted.
+    WARNING: this is destructive. Deletes are irreversible. Modes:
+
+    * ``--dry-run`` / ``--dry``: print the plan and exit; nothing is deleted.
+    * default: print the plan, prompt for confirmation, delete that set on yes.
+    * ``--yes`` / ``-y``: print the plan and delete without prompting.
+
+    Within one invocation the printed plan is what gets deleted -- detection
+    runs once. A later ``clean`` run re-detects from scratch.
 
     --detector is required: clean deliberately refuses to act on every
     detector at once, so one command can never delete across all resource
@@ -215,21 +231,28 @@ def clean(
     ago -- prefer --exclude and narrow --detector until tag/age safety
     rails (janitor:keep) land.
 
-    Findings are re-detected fresh right before acting -- clean never acts
-    on stale findings from an earlier `audit` run. That also means a dry
-    run does not bind the following execute: a resource created in between
-    is deleted without having appeared in the reviewed preview.
+    Findings are detected fresh for this run -- clean never acts on stale
+    findings from an earlier `audit` run.
 
     Deletes are asynchronous in OpenStack: a successful call means the
     delete was accepted, not that the resource is already gone.
 
-    Exit codes: dry run always exits 0. With --yes: 0 if every deletion was
-    accepted, 1 if any resource was not deleted -- either the deletion failed
-    or the detector does not support cleaning (failures are isolated
-    per-resource and do not stop the others). 2 = an unknown --detector name,
-    no --detector at all, or an --exclude ID that matched nothing. 3 =
-    connecting to the cloud or scanning it failed.
+    Exit codes: dry run and declined confirmation exit 0. After deleting: 0
+    if every deletion was accepted, 1 if any resource was not deleted --
+    either the deletion failed or the detector does not support cleaning
+    (failures are isolated per-resource and do not stop the others). 2 =
+    an unknown --detector name, no --detector at all, an --exclude ID that
+    matched nothing, --dry-run combined with --yes, or a confirmation prompt
+    required on a non-interactive terminal. 3 = connecting to the cloud or
+    scanning it failed.
     """
+    if dry_run and yes:
+        error_console.print(
+            "[red]--dry-run and --yes cannot be used together. "
+            "Pass --dry-run to preview only, or --yes to delete without prompting.[/red]"
+        )
+        raise typer.Exit(code=2)
+
     if not detector:
         valid = ", ".join(sorted(d.name for d in get_detectors())) or "(none registered)"
         error_console.print(
@@ -249,6 +272,7 @@ def clean(
 
     try:
         # Detect everything up front: a detection failure must delete nothing.
+        # One pass binds the preview to any later delete in this invocation.
         findings_by_detector: list[tuple[Detector, list[Finding]]] = [
             (det, det.detect(conn)) for det in selected
         ]
@@ -271,8 +295,6 @@ def clean(
         )
         raise typer.Exit(code=2)
 
-    actions: list[CleanAction] = []
-    any_failed = False
     detected = sum(len(findings) for _, findings in findings_by_detector)
 
     def _action(finding: Finding, status: str) -> CleanAction:
@@ -283,14 +305,55 @@ def clean(
             status=status,
         )
 
+    # Preview from this detection pass -- the same findings are deleted later.
+    preview: list[CleanAction] = []
+    for det, findings in findings_by_detector:
+        for finding in findings:
+            if finding.resource_id in exclude_ids:
+                status = "skipped"
+            elif _supports_clean(det):
+                status = "would-delete"
+            else:
+                status = "unsupported"
+            preview.append(_action(finding, status))
+
+    print_clean_plan(preview, console, executed=False, detected=detected, dry_run=dry_run)
+
+    would_delete = sum(1 for action in preview if action.status == "would-delete")
+    if would_delete == 0:
+        raise typer.Exit(code=0)
+
+    if dry_run:
+        raise typer.Exit(code=0)
+
+    if not yes:
+        if not _can_prompt():
+            error_console.print(
+                "[red]Refusing to prompt on a non-interactive terminal. "
+                "Pass --yes to delete or --dry-run to preview only.[/red]"
+            )
+            raise typer.Exit(code=2)
+        if not typer.confirm("Proceed with deletion?"):
+            console.print("Aborted — nothing was deleted.")
+            raise typer.Exit(code=0)
+
+    actions: list[CleanAction] = []
+    any_failed = False
+
     try:
         for det, findings in findings_by_detector:
             for finding in findings:
                 if finding.resource_id in exclude_ids:
                     status = "skipped"
-                elif not yes:
-                    # Preview must not promise a delete a detector cannot do.
-                    status = "would-delete" if _supports_clean(det) else "unsupported"
+                elif not _supports_clean(det):
+                    # Preview already marked these unsupported; still report
+                    # them on execute so the record matches what was shown.
+                    any_failed = True
+                    error_console.print(
+                        f"[red]{escape(det.name)} does not support clean; "
+                        f"{escape(finding.resource_id)} left alone.[/red]"
+                    )
+                    status = "unsupported"
                 else:
                     try:
                         det.clean(conn, finding)
@@ -325,10 +388,8 @@ def clean(
     finally:
         # Always report, even on Ctrl-C or an unexpected error mid-run: the
         # user must never be left without a record of what was deleted.
-        print_clean_plan(actions, console, executed=yes, detected=detected)
+        print_clean_plan(actions, console, executed=True, detected=detected)
 
-    if not yes:
-        raise typer.Exit(code=0)
     raise typer.Exit(code=1 if any_failed else 0)
 
 

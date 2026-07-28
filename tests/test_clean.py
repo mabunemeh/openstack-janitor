@@ -10,7 +10,7 @@ from openstack.exceptions import SDKException
 from typer.testing import CliRunner
 
 from openstack_janitor.cli import app
-from openstack_janitor.detectors.base import Finding
+from openstack_janitor.detectors.base import Detector, Finding
 
 runner = CliRunner()
 
@@ -32,8 +32,10 @@ class FakeDetector:
         self._raise_on_clean = raise_on_clean
         self._raise_at_id = raise_at_id
         self.cleaned: list[str] = []
+        self.detect_calls = 0
 
     def detect(self, conn: Any) -> list[Finding]:
+        self.detect_calls += 1
         return self._findings
 
     def clean(self, conn: Any, finding: Finding) -> None:
@@ -51,6 +53,22 @@ class AuditOnlyDetector(FakeDetector):
         raise NotImplementedError("AuditOnlyDetector does not support clean")
 
 
+class NoCleanDetector(Detector):
+    """A Detector subclass that inherits the base clean stub (no override)."""
+
+    name = "no-clean"
+    description = "audit-only stub with no clean override"
+
+    def __init__(self, findings: list[Finding] | None = None) -> None:
+        self._findings = findings or []
+        self.cleaned: list[str] = []
+        self.detect_calls = 0
+
+    def detect(self, conn: Any) -> list[Finding]:
+        self.detect_calls += 1
+        return self._findings
+
+
 def _finding(resource_id: str = "vol-123", **overrides: Any) -> Finding:
     defaults = {
         "resource_type": "volume",
@@ -63,25 +81,56 @@ def _finding(resource_id: str = "vol-123", **overrides: Any) -> Finding:
     return Finding(**defaults)
 
 
-def _run(args: list[str], detectors: list[FakeDetector], **patches: Any):
+def _run(
+    args: list[str],
+    detectors: list[Any],
+    *,
+    input: str | None = None,
+    can_prompt: bool = True,
+    **patches: Any,
+):
     """Invoke the CLI with get_connection/get_detectors patched."""
     connection = patches.pop("connection", None) or MagicMock()
     with (
         patch("openstack_janitor.cli.get_connection", return_value=connection),
         patch("openstack_janitor.cli.get_detectors", return_value=list(detectors)),
+        patch("openstack_janitor.cli._can_prompt", return_value=can_prompt),
     ):
-        return runner.invoke(app, args)
+        return runner.invoke(app, args, input=input)
 
 
 def test_clean_dry_run_does_not_call_clean_and_previews() -> None:
     det = FakeDetector("unattached-volumes", [_finding()])
 
-    result = _run(["clean", "-d", "unattached-volumes"], [det])
+    result = _run(["clean", "-d", "unattached-volumes", "--dry-run"], [det])
+
+    assert result.exit_code == 0
+    assert det.cleaned == []
+    assert det.detect_calls == 1
+    assert "would" in result.stdout.lower()
+    assert "Dry run" in result.stdout
+    assert "--dry-run" in result.stdout
+
+
+def test_clean_prompt_preview_is_not_labeled_dry_run() -> None:
+    """Bare clean prints a plan, not a dry-run summary, before prompting."""
+    det = FakeDetector("unattached-volumes", [_finding()])
+
+    result = _run(["clean", "-d", "unattached-volumes"], [det], input="n\n")
+
+    assert result.exit_code == 0
+    assert "Dry run" not in result.stdout
+    assert "1 resource(s) would be deleted" in result.stdout
+
+
+def test_clean_dry_short_flag() -> None:
+    det = FakeDetector("unattached-volumes", [_finding()])
+
+    result = _run(["clean", "-d", "unattached-volumes", "--dry"], [det])
 
     assert result.exit_code == 0
     assert det.cleaned == []
     assert "would" in result.stdout.lower()
-    assert "--yes" in result.stdout
 
 
 def test_clean_requires_explicit_detector() -> None:
@@ -94,6 +143,57 @@ def test_clean_requires_explicit_detector() -> None:
     assert det.cleaned == []
 
 
+def test_clean_dry_run_and_yes_conflict() -> None:
+    det = FakeDetector("unattached-volumes", [_finding()])
+
+    result = _run(["clean", "-d", "unattached-volumes", "--dry-run", "--yes"], [det])
+
+    assert result.exit_code == 2
+    assert det.cleaned == []
+    assert det.detect_calls == 0
+
+
+def test_clean_prompt_yes_deletes() -> None:
+    det = FakeDetector("unattached-volumes", [_finding()])
+
+    result = _run(["clean", "-d", "unattached-volumes"], [det], input="y\n")
+
+    assert result.exit_code == 0
+    assert det.cleaned == ["vol-123"]
+    assert det.detect_calls == 1
+    assert "1 deletion(s) requested" in result.stdout
+
+
+def test_clean_prompt_yes_word_deletes() -> None:
+    det = FakeDetector("unattached-volumes", [_finding()])
+
+    result = _run(["clean", "-d", "unattached-volumes"], [det], input="yes\n")
+
+    assert result.exit_code == 0
+    assert det.cleaned == ["vol-123"]
+
+
+def test_clean_prompt_no_aborts_without_deleting() -> None:
+    det = FakeDetector("unattached-volumes", [_finding()])
+
+    result = _run(["clean", "-d", "unattached-volumes"], [det], input="n\n")
+
+    assert result.exit_code == 0
+    assert det.cleaned == []
+    assert det.detect_calls == 1
+    assert "aborted" in result.stdout.lower()
+
+
+def test_clean_non_interactive_without_yes_exits_two() -> None:
+    det = FakeDetector("unattached-volumes", [_finding()])
+
+    result = _run(["clean", "-d", "unattached-volumes"], [det], can_prompt=False)
+
+    assert result.exit_code == 2
+    assert det.cleaned == []
+    assert "non-interactive" in result.stdout.lower() or "non-interactive" in result.stderr.lower()
+
+
 def test_clean_execute_calls_clean_and_reports_requested() -> None:
     det = FakeDetector("unattached-volumes", [_finding()])
 
@@ -101,7 +201,18 @@ def test_clean_execute_calls_clean_and_reports_requested() -> None:
 
     assert result.exit_code == 0
     assert det.cleaned == ["vol-123"]
+    assert det.detect_calls == 1
     assert "1 deletion(s) requested" in result.stdout
+
+
+def test_clean_detects_once_when_deleting() -> None:
+    """Preview and execute must share a single detection pass."""
+    det = FakeDetector("unattached-volumes", [_finding()])
+
+    result = _run(["clean", "-d", "unattached-volumes", "--yes"], [det])
+
+    assert result.exit_code == 0
+    assert det.detect_calls == 1
 
 
 def test_clean_exclude_skips_resource() -> None:
@@ -136,7 +247,7 @@ def test_clean_exclude_is_honored_in_dry_run() -> None:
     det = FakeDetector("unattached-volumes", [keep, other])
 
     result = _run(
-        ["clean", "-d", "unattached-volumes", "--exclude", "vol-keep"],
+        ["clean", "-d", "unattached-volumes", "--dry-run", "--exclude", "vol-keep"],
         [det],
     )
 
@@ -260,6 +371,22 @@ def test_clean_audit_only_detector_is_reported_unsupported() -> None:
     assert "unsupported" in result.stdout.lower()
 
 
+def test_clean_base_stub_detector_is_unsupported_alongside_deletes() -> None:
+    """A detector that never overrides clean must stay unsupported mid-execute."""
+    vol_det = FakeDetector("unattached-volumes", [_finding(resource_id="vol-1")])
+    stub = NoCleanDetector([_finding(resource_id="stub-1")])
+
+    result = _run(
+        ["clean", "-d", "unattached-volumes", "-d", "no-clean", "--yes"],
+        [vol_det, stub],
+    )
+
+    assert result.exit_code == 1
+    assert vol_det.cleaned == ["vol-1"]
+    assert stub.cleaned == []
+    assert "unsupported" in result.stdout.lower()
+
+
 def test_clean_routes_each_finding_to_its_own_detector() -> None:
     """Findings must be cleaned by the detector that produced them."""
     vol_det = FakeDetector("unattached-volumes", [_finding(resource_id="vol-1")])
@@ -286,6 +413,7 @@ def test_clean_short_options() -> None:
             "openstack_janitor.cli.get_connection", return_value=connection
         ) as mock_get_connection,
         patch("openstack_janitor.cli.get_detectors", return_value=[det]),
+        patch("openstack_janitor.cli._can_prompt", return_value=True),
     ):
         result = runner.invoke(
             app,
@@ -300,7 +428,7 @@ def test_clean_short_options() -> None:
 def test_clean_unknown_detector_exits_two() -> None:
     det = FakeDetector("unattached-volumes")
 
-    result = _run(["clean", "--detector", "does-not-exist"], [det])
+    result = _run(["clean", "--detector", "does-not-exist", "--dry-run"], [det])
 
     assert result.exit_code == 2
 
@@ -362,7 +490,7 @@ def test_clean_detect_connect_failure_deletes_nothing_and_exits_three() -> None:
 def test_clean_no_findings_exits_zero_with_friendly_message() -> None:
     det = FakeDetector("unattached-volumes", [])
 
-    result = _run(["clean", "-d", "unattached-volumes"], [det])
+    result = _run(["clean", "-d", "unattached-volumes", "--dry-run"], [det])
 
     assert result.exit_code == 0
     assert "nothing to clean" in result.stdout.lower()

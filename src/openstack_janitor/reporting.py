@@ -142,11 +142,14 @@ def print_clean_plan(
     *,
     executed: bool,
     detected: int = 0,
+    dry_run: bool = False,
 ) -> None:
     """Print the clean actions table plus a summary line.
 
-    ``executed=False`` means this was a dry run: nothing was deleted, and the
-    summary tells the caller how to actually delete. ``executed=True`` means
+    ``executed=False`` means this is a plan preview: nothing has been deleted
+    yet. Pass ``dry_run=True`` when the command is exiting after the preview
+    (``--dry-run``); otherwise the summary is a neutral plan line suitable
+    before a confirmation prompt or ``--yes`` execute. ``executed=True`` means
     each action's ``status`` reflects what really happened.
 
     ``detected`` is how many findings the detectors returned. It exists so an
@@ -172,13 +175,17 @@ def print_clean_plan(
         would_delete = sum(1 for action in actions if action.status == "would-delete")
         skipped = sum(1 for action in actions if action.status == "skipped")
         unsupported = sum(1 for action in actions if action.status == "unsupported")
-        summary = (
-            f"Dry run — {would_delete} resource(s) would be deleted. Re-run with --yes to delete."
-        )
+        if dry_run:
+            summary = (
+                f"Dry run — {would_delete} resource(s) would be deleted. "
+                "Re-run without --dry-run to delete (prompts unless --yes)."
+            )
+        else:
+            summary = f"{would_delete} resource(s) would be deleted."
         if skipped:
             summary += f" {skipped} skipped (excluded)."
         if unsupported:
-            # --yes cannot delete these, so never let the advice above imply it.
+            # These cannot be deleted, so never let the advice above imply it.
             summary += f" {unsupported} unsupported (detector cannot delete them)."
         console.print(f"[yellow]{summary}[/yellow]")
         return
