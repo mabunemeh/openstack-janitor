@@ -159,10 +159,7 @@ def audit(
         False,
         "--long",
         "-l",
-        help=(
-            "Show every available column, including per-detector Extra detail. "
-            "Only affects --format table; json and html always include it."
-        ),
+        help="Print all extra columns.",
     ),
 ) -> None:
     """Scan the cloud and report orphaned/wasteful resources.
