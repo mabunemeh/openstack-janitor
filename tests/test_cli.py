@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 import re
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 from keystoneauth1.exceptions import ConnectFailure
 from openstack.exceptions import SDKException
+from rich.console import Console
+from rich.errors import MarkupError
 from typer.testing import CliRunner
 
-from openstack_janitor.cli import app
+from openstack_janitor.cli import _UNCLAMPED_WIDTH, _out_console, app
 from openstack_janitor.detectors.base import Finding
 
 runner = CliRunner()
@@ -372,3 +374,128 @@ def test_detectors_shows_live_registry() -> None:
 
     assert result.exit_code == 0
     assert "unattached-volumes" in result.stdout
+
+
+def test_out_console_is_unclamped_when_output_is_piped(monkeypatch) -> None:
+    """Piped output must not be clamped to rich's 80-column fallback."""
+    monkeypatch.delenv("COLUMNS", raising=False)
+
+    assert _out_console().width == _UNCLAMPED_WIDTH
+
+
+def test_out_console_respects_explicit_columns(monkeypatch) -> None:
+    """An explicit COLUMNS is a deliberate override and must win."""
+    monkeypatch.setenv("COLUMNS", "120")
+
+    assert _out_console().width != _UNCLAMPED_WIDTH
+
+
+def test_out_console_adapts_to_a_real_terminal(monkeypatch) -> None:
+    """On a TTY the table should still fit the terminal, as before."""
+    monkeypatch.delenv("COLUMNS", raising=False)
+
+    with patch.object(Console, "is_terminal", new_callable=PropertyMock, return_value=True):
+        console = _out_console()
+
+    assert console.width != _UNCLAMPED_WIDTH
+
+
+def test_audit_piped_output_keeps_full_resource_id() -> None:
+    """Regression: a truncated id cannot be pasted into `clean --exclude`."""
+    long_id = "a1b2c3d4-5678-90ab-cdef-1234567890ab"
+    finding = Finding(
+        resource_type="volume",
+        resource_id=long_id,
+        resource_name="very-long-volume-name-that-keeps-going-and-going",
+        project_id="project-abcdef0123456789",
+        reason="volume is unattached (status=available) and has been for a long time",
+    )
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            return_value=[FakeDetector("unattached-volumes", [finding])],
+        ),
+    ):
+        result = runner.invoke(app, ["audit"])
+
+    out = _strip_ansi(result.stdout)
+    assert long_id in out
+    assert "very-long-volume-name-that-keeps-going-and-going" in out
+    assert "\u2026" not in out
+
+
+def _finding_with_extra() -> Finding:
+    return Finding(
+        resource_type="volume",
+        resource_id="vol-123",
+        resource_name="orphan",
+        project_id="proj-1",
+        reason="volume is unattached (status=available)",
+        extra={"size_gb": "100"},
+    )
+
+
+def _audit(args: list[str], finding: Finding):
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            return_value=[FakeDetector("unattached-volumes", [finding])],
+        ),
+    ):
+        return runner.invoke(app, args)
+
+
+def test_audit_hides_extra_column_by_default() -> None:
+    out = _strip_ansi(_audit(["audit"], _finding_with_extra()).stdout)
+
+    assert "Extra" not in out
+    assert "size_gb" not in out
+
+
+def test_audit_long_shows_extra_column() -> None:
+    out = _strip_ansi(_audit(["audit", "--long"], _finding_with_extra()).stdout)
+
+    assert "Extra" in out
+    assert "size_gb=100" in out
+
+
+def test_audit_long_short_flag() -> None:
+    out = _strip_ansi(_audit(["audit", "-l"], _finding_with_extra()).stdout)
+
+    assert "size_gb=100" in out
+
+
+def test_audit_long_with_empty_extra_renders() -> None:
+    finding = Finding(
+        resource_type="volume",
+        resource_id="vol-123",
+        resource_name="orphan",
+        project_id="proj-1",
+        reason="volume is unattached (status=available)",
+    )
+
+    result = _audit(["audit", "--long"], finding)
+
+    assert result.exit_code == 1
+    assert "vol-123" in _strip_ansi(result.stdout)
+
+
+def test_audit_long_escapes_markup_in_extra() -> None:
+    """extra values are cloud-supplied and must not be parsed as rich markup."""
+    finding = Finding(
+        resource_type="volume",
+        resource_id="vol-123",
+        resource_name="orphan",
+        project_id="proj-1",
+        reason="volume is unattached (status=available)",
+        extra={"note": "[/red]evil[bold"},
+    )
+
+    result = _audit(["audit", "--long"], finding)
+
+    assert result.exit_code == 1
+    # Rendering the table at all proves the markup was escaped, not parsed.
+    assert not isinstance(result.exception, MarkupError)
+    assert "evil" in _strip_ansi(result.stdout)

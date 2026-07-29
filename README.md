@@ -53,6 +53,7 @@ janitor audit -c my-cloud
 janitor audit -d unattached-volumes -d orphaned-ports
 janitor audit -f json > findings.json
 janitor audit -f html > report.html
+janitor audit --long
 ```
 
 Short options: `-c` / `--cloud`, `-d` / `--detector`, `-f` / `--format`, `-h` / `--help`.
@@ -63,6 +64,15 @@ without connecting to a cloud. Use the names it prints with
 
 `--format table` (the default) prints a rich table; `json` and `html` write
 machine-readable / shareable reports to stdout.
+
+`--long` / `-l` adds an **Extra** column with the per-detector detail that
+`json` and `html` always carry (snapshot timestamps, volume IDs, rule counts).
+Without it the table stays at Type, ID, Name, Project, Reason.
+
+The table fits your terminal when printed to one, but is **not** clamped when
+redirected — `janitor audit | less -S` or `> findings.txt` keeps full resource
+IDs and names, so they can be pasted into `janitor clean --exclude`. Set
+`COLUMNS` to force a specific width.
 
 Example output when orphaned volumes are found:
 

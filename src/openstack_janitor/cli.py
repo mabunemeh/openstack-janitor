@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import sys
 from enum import Enum
 from typing import Optional
@@ -39,8 +40,28 @@ app = typer.Typer(
     no_args_is_help=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
-console = Console()
 error_console = Console(stderr=True)
+
+# Rich clamps to 80 columns when stdout is not a terminal, which truncates
+# resource ids mid-string -- and piping to `less` or a file is exactly when the
+# whole id is wanted, to paste into `clean --exclude`. So treat "not a terminal"
+# as "do not clamp" and let the content decide the width. Tables size to their
+# content, so this is a ceiling, not a fixed width.
+_UNCLAMPED_WIDTH = 10_000
+
+
+def _out_console() -> Console:
+    """Build the console for human-facing output, sized for its destination.
+
+    Must be called at print time, not import time: the stream is only known
+    once the command runs.
+    """
+    console = Console()
+    # A real terminal already reports the width the user wants to fit; an
+    # explicit COLUMNS is a deliberate override. Respect both.
+    if console.is_terminal or os.environ.get("COLUMNS"):
+        return console
+    return Console(width=_UNCLAMPED_WIDTH)
 
 
 class OutputFormat(str, Enum):
@@ -111,7 +132,7 @@ def detectors() -> None:
     table.add_column("Description")
     for det in get_detectors():
         table.add_row(det.name, det.description)
-    console.print(table)
+    _out_console().print(table)
 
 
 @app.command()
@@ -133,6 +154,15 @@ def audit(
         "--format",
         "-f",
         help="Output format: table for humans, json/html for reports or piping.",
+    ),
+    long: bool = typer.Option(
+        False,
+        "--long",
+        "-l",
+        help=(
+            "Show every available column, including per-detector Extra detail. "
+            "Only affects --format table; json and html always include it."
+        ),
     ),
 ) -> None:
     """Scan the cloud and report orphaned/wasteful resources.
@@ -169,7 +199,12 @@ def audit(
         print(render_html(findings))
     else:
         # Detector column is redundant when the user already narrowed to one -d.
-        print_findings(findings, console, show_detector=len(selected) != 1)
+        print_findings(
+            findings,
+            _out_console(),
+            show_detector=len(selected) != 1,
+            show_extra=long,
+        )
 
     raise typer.Exit(code=1 if findings else 0)
 
@@ -320,6 +355,7 @@ def clean(
                 status = "unsupported"
             preview.append(_action(finding, status))
 
+    console = _out_console()
     print_clean_plan(preview, console, executed=False, detected=detected, dry_run=dry_run)
 
     would_delete = sum(1 for action in preview if action.status == "would-delete")

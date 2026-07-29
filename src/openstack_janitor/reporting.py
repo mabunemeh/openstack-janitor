@@ -30,11 +30,20 @@ class CleanAction:
     """
 
 
-def render_table(findings: list[Finding], *, show_detector: bool = False) -> Table:
+def format_extra(extra: dict[str, str]) -> str:
+    """Render a finding's ``extra`` mapping as compact ``k=v`` pairs."""
+    return ", ".join(f"{key}={value}" for key, value in extra.items())
+
+
+def render_table(
+    findings: list[Finding], *, show_detector: bool = False, show_extra: bool = False
+) -> Table:
     """Build a rich Table summarizing the given findings.
 
     When ``show_detector`` is true, a Detector column is placed first so the
-    kebab-case name is easy to copy into ``janitor clean -d``.
+    kebab-case name is easy to copy into ``janitor clean -d``. When
+    ``show_extra`` is true, an Extra column exposes the per-detector detail
+    that JSON and HTML always carry.
     """
     table = Table(title="openstack-janitor findings")
     if show_detector:
@@ -45,6 +54,8 @@ def render_table(findings: list[Finding], *, show_detector: bool = False) -> Tab
     table.add_column("Name")
     table.add_column("Project")
     table.add_column("Reason")
+    if show_extra:
+        table.add_column("Extra")
 
     for finding in findings:
         # escape(): names/ids come from the cloud, and an unbalanced "[/red]"
@@ -61,18 +72,24 @@ def render_table(findings: list[Finding], *, show_detector: bool = False) -> Tab
                 escape(finding.reason),
             ]
         )
+        if show_extra:
+            cells.append(escape(format_extra(finding.extra)))
         table.add_row(*cells)
     return table
 
 
 def print_findings(
-    findings: list[Finding], console: Console, *, show_detector: bool = False
+    findings: list[Finding],
+    console: Console,
+    *,
+    show_detector: bool = False,
+    show_extra: bool = False,
 ) -> None:
     """Print findings as a table, or a clean-cloud message if there are none."""
     if not findings:
         console.print("[green]No findings — cloud looks clean.[/green]")
         return
-    console.print(render_table(findings, show_detector=show_detector))
+    console.print(render_table(findings, show_detector=show_detector, show_extra=show_extra))
 
 
 def render_json(findings: list[Finding]) -> str:
@@ -94,7 +111,7 @@ def render_html(findings: list[Finding]) -> str:
     else:
         rows = []
         for finding in findings:
-            extra = ", ".join(f"{k}={v}" for k, v in finding.extra.items())
+            extra = format_extra(finding.extra)
             cells = [
                 finding.detector,
                 finding.resource_type,
