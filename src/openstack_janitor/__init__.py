@@ -1,3 +1,3 @@
 """openstack-janitor: audit an OpenStack cloud for orphaned and wasteful resources."""
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"

@@ -4,6 +4,43 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-25
+
+### Changed
+
+- **Breaking — `janitor clean` no longer previews by default.** In 0.3.x,
+  `janitor clean -d <detector>` was a dry run that deleted nothing. It now
+  prints the plan, asks for confirmation, and deletes on `yes`. Use
+  `--dry-run` (or `--dry`) for the old preview-and-exit behaviour. `--yes`
+  still deletes without prompting. If you have scripts or habits built on
+  bare `clean` being safe, add `--dry-run`.
+  - Answering anything but yes, or pressing Enter, deletes nothing.
+  - `clean` refuses to prompt when stdin is not a terminal, so it cannot
+    delete unattended: pass `--yes` or `--dry-run` in CI. Exits `2`.
+  - `--dry-run` together with `--yes` is rejected with exit `2`.
+- Detection now runs **once per invocation**, and the plan you confirm is the
+  set that gets deleted. Previously the preview and the `--yes` run were two
+  independent detection passes, so a resource created in between could be
+  deleted without ever appearing in the reviewed table. Thanks to @pczarnik
+  for the report and the fix (#4).
+
+### Added
+
+- `audit` shows a **Detector** column so the name can be copied into
+  `clean -d`. Hidden when a single `--detector` is given, since it is then
+  redundant. `Finding` gained a `detector` field, which also adds a
+  `detector` key to `--format json` output. Thanks @pczarnik (#5).
+- `audit --long` / `-l` prints all extra columns, exposing the per-detector
+  detail that `json` and `html` already carried (#7).
+
+### Fixed
+
+- Table output is no longer clamped to 80 columns when stdout is not a
+  terminal. Rich's non-terminal fallback truncated resource IDs mid-string,
+  so IDs from `janitor audit | less` could not be pasted into
+  `clean --exclude`. Terminals are unchanged, and an explicit `COLUMNS`
+  still wins (#6).
+
 ## [0.3.1] - 2026-07-25
 
 ### Fixed
@@ -106,6 +143,7 @@ First release: the complete read-only audit story.
 - Non-admin fallback: detectors that use admin-only `all_projects` listings
   retry scoped to the caller's own project when forbidden.
 
+[0.4.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.4.0
 [0.3.1]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.3.1
 [0.3.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.3.0
 [0.2.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.2.0
