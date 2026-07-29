@@ -91,47 +91,51 @@ fails.
 ## Cleaning
 
 ```sh
-janitor clean -d unattached-volumes                   # dry run: preview only, deletes nothing
-janitor clean -d unattached-volumes --yes             # delete what that detector flags
+janitor clean -d unattached-volumes --dry-run         # preview only, deletes nothing
+janitor clean -d unattached-volumes                   # preview, then prompt before deleting
+janitor clean -d unattached-volumes --yes             # preview and delete without prompting
 janitor clean -d unattached-volumes -e vol-0001 --yes # keep specific resource IDs
 ```
 
-`janitor clean` is **dry run by default** — it re-runs the detectors and shows
-what it *would* delete, but touches nothing. Pass `--yes` to actually delete.
-Deletes are real and irreversible: once a volume, snapshot, floating IP,
-port, security group, instance, or image is gone, it is gone.
+`janitor clean` detects once, prints the plan for that set, then either exits
+(`--dry-run`), asks for confirmation (default), or deletes without asking
+(`--yes`). Deletes are real and irreversible: once a volume, snapshot,
+floating IP, port, security group, instance, or image is gone, it is gone.
 
 `--detector` is **required**. `clean` refuses to act on every detector at once,
 so a single command can never delete across all seven resource types.
 
-Read this before using `--yes`:
+Read this before deleting:
 
 - **Some detectors have no age threshold.** `orphaned-ports` and
   `unused-security-groups` flag by state alone, so a port or group created
   seconds ago — mid-provisioning, mid-CI-run — is a finding and will be
   deleted. Until tag/age rails land, keep `--detector` narrow.
-- **The preview does not bind the execution.** Dry run and `--yes` are two
-  independent detection passes. A resource created in between is deleted
-  without ever having appeared in the table you reviewed.
+- **Within one invocation the printed plan is what gets deleted.** Detection
+  runs once; confirmation or `--yes` acts on that same set. A later `clean`
+  run re-detects from scratch.
 - **Cleaning can create new findings.** Deleting a shutoff instance leaves its
   volumes unattached; deleting snapshots orphans the images built from them.
-  The next run will flag those. Re-read each dry run rather than looping
+  The next run will flag those. Re-read each plan rather than looping
   `--yes` blindly.
 - **`--exclude` takes resource IDs, not names.** An `--exclude` value that
   matches no finding aborts the run rather than being ignored, so a typo
   cannot silently delete what it was meant to protect.
 - **Deletes are asynchronous.** A successful call means the delete was
   accepted; verify with `janitor audit` afterwards.
+- **Non-interactive terminals need `--yes` or `--dry-run`.** Bare `clean`
+  refuses to prompt when stdin is not a TTY (for example in CI).
 
 Tag/age safety rails (e.g. a `janitor:keep` marker) are on the
 [roadmap](#roadmap) but not implemented yet.
 
-`janitor clean` exits `0` on a successful dry run or execute, `1` if any
-resource was not deleted during `--yes` — either the deletion failed or the
-detector does not support cleaning (other resources are still processed;
-failures are isolated per resource) — `2` for a missing or unknown
-`--detector` or an `--exclude` ID that matched nothing, and `3` if connecting
-to the cloud or scanning it fails.
+`janitor clean` exits `0` on a successful dry run, declined confirmation, or
+execute, `1` if any resource was not deleted during execute — either the
+deletion failed or the detector does not support cleaning (other resources
+are still processed; failures are isolated per resource) — `2` for a missing
+or unknown `--detector`, an `--exclude` ID that matched nothing,
+`--dry-run` combined with `--yes`, or a prompt required on a non-interactive
+terminal, and `3` if connecting to the cloud or scanning it fails.
 
 ## Detectors
 

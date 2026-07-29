@@ -9,6 +9,7 @@ from rich.console import Console
 
 from openstack_janitor.detectors.base import Finding
 from openstack_janitor.reporting import (
+    CleanAction,
     print_clean_plan,
     print_findings,
     render_html,
@@ -133,3 +134,31 @@ def test_print_clean_plan_no_actions_and_nothing_detected_is_clean(capsys) -> No
     print_clean_plan([], Console(), executed=True, detected=0)
 
     assert "nothing to clean" in capsys.readouterr().out.lower()
+
+
+def test_print_clean_plan_preview_is_not_dry_run_by_default(capsys) -> None:
+    action = CleanAction(
+        resource_type="volume",
+        resource_id="vol-1",
+        resource_name="orphan",
+        status="would-delete",
+    )
+    print_clean_plan([action], Console(), executed=False, detected=1)
+
+    out = capsys.readouterr().out
+    assert "Dry run" not in out
+    assert "1 resource(s) would be deleted" in out
+
+
+def test_print_clean_plan_dry_run_labels_summary(capsys) -> None:
+    action = CleanAction(
+        resource_type="volume",
+        resource_id="vol-1",
+        resource_name="orphan",
+        status="would-delete",
+    )
+    print_clean_plan([action], Console(), executed=False, detected=1, dry_run=True)
+
+    out = capsys.readouterr().out
+    assert "Dry run" in out
+    assert "--dry-run" in out
