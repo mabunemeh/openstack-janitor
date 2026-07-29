@@ -69,15 +69,19 @@ Example output when orphaned volumes are found:
 ```
 $ janitor audit --cloud my-cloud
               openstack-janitor findings
-┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Type          ┃ ID        ┃ Name    ┃ Project ┃ Reason                       ┃
-┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ volume        │ a1b2c3d4… │ old-db  │ proj-1  │ volume is unattached         │
-│               │           │         │         │ (status=available)           │
-└───────────────┴───────────┴─────────┴─────────┴──────────────────────────────┘
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Detector            ┃ Type   ┃ ID        ┃ Name    ┃ Project ┃ Reason                       ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ unattached-volumes  │ volume │ a1b2c3d4… │ old-db  │ proj-1  │ volume is unattached         │
+│                     │        │           │         │         │ (status=available)           │
+└─────────────────────┴────────┴───────────┴─────────┴─────────┴──────────────────────────────┘
 $ echo $?
 1
 ```
+
+The **Detector** column appears when more than one detector runs (the default,
+or two or more `-d` flags). With a single `-d`, the column is omitted. Use the
+name to run `janitor clean -d <detector>`.
 
 `janitor audit` exits `0` when nothing is found, `1` when findings were
 reported (so it's safe to wire into a cron job or CI check), `2` if an
