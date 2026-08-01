@@ -12,8 +12,10 @@ from rich.console import Console
 from rich.errors import MarkupError
 from typer.testing import CliRunner
 
-from openstack_janitor.cli import _UNCLAMPED_WIDTH, _out_console, app
+from openstack_janitor.cli import _UNCLAMPED_WIDTH, _out_console, _select_detectors, app
+from openstack_janitor.config import Config, ConfigError
 from openstack_janitor.detectors.base import Finding
+from openstack_janitor.detectors.snapshots import OldSnapshotsDetector
 
 runner = CliRunner()
 
@@ -223,6 +225,17 @@ def test_audit_help_short_option() -> None:
     assert "--detector" in help_text
     assert "-f" in help_text
     assert "--format" in help_text
+    assert "-C" in help_text
+    assert "--config" in help_text
+
+
+def test_detectors_help_shows_config_option() -> None:
+    result = runner.invoke(app, ["detectors", "--help"])
+
+    help_text = _strip_ansi(result.stdout)
+    assert result.exit_code == 0
+    assert "-C" in help_text
+    assert "--config" in help_text
 
 
 def test_audit_sdk_exception_exits_three() -> None:
@@ -480,6 +493,166 @@ def test_audit_long_with_empty_extra_renders() -> None:
 
     assert result.exit_code == 1
     assert "vol-123" in _strip_ansi(result.stdout)
+
+
+def _config_aware_get_detectors(detectors: list[FakeDetector]):
+    """A `get_detectors` stand-in that honors `config.disabled`, like the real one."""
+
+    def _get(config=None):
+        if config is None:
+            return list(detectors)
+        return [d for d in detectors if d.name not in config.disabled]
+
+    return _get
+
+
+def test_audit_config_error_exits_two() -> None:
+    with patch(
+        "openstack_janitor.cli.load_config",
+        side_effect=ConfigError("/bad/janitor.toml: invalid TOML: boom"),
+    ):
+        result = runner.invoke(app, ["audit", "--config", "/bad/janitor.toml"])
+
+    assert result.exit_code == 2
+    assert "invalid TOML" in _strip_ansi(result.output)
+
+
+def test_audit_disabled_detector_is_not_run() -> None:
+    vol = Finding(
+        resource_type="volume",
+        resource_id="vol-123",
+        resource_name="orphan",
+        project_id="proj-1",
+        reason="volume is unattached (status=available)",
+    )
+    srv = Finding(
+        resource_type="instance",
+        resource_id="srv-123",
+        resource_name="old-box",
+        project_id="proj-1",
+        reason="instance has been shutoff",
+    )
+    detectors = [
+        FakeDetector("unattached-volumes", [vol]),
+        FakeDetector("shutoff-instances", [srv]),
+    ]
+    config = Config(disabled=("shutoff-instances",), source="/fake/janitor.toml")
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch("openstack_janitor.cli.load_config", return_value=config),
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            side_effect=_config_aware_get_detectors(detectors),
+        ),
+    ):
+        result = runner.invoke(app, ["audit", "--config", "/fake/janitor.toml"])
+
+    out = _strip_ansi(result.stdout)
+    assert result.exit_code == 1
+    assert "vol-123" in out
+    assert "srv-123" not in out
+
+
+def test_audit_explicit_detector_overrides_disabled_with_stderr_note() -> None:
+    srv = Finding(
+        resource_type="instance",
+        resource_id="srv-123",
+        resource_name="old-box",
+        project_id="proj-1",
+        reason="instance has been shutoff",
+    )
+    detectors = [
+        FakeDetector("unattached-volumes"),
+        FakeDetector("shutoff-instances", [srv]),
+    ]
+    config = Config(disabled=("shutoff-instances",), source="/fake/janitor.toml")
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch("openstack_janitor.cli.load_config", return_value=config),
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            side_effect=_config_aware_get_detectors(detectors),
+        ),
+    ):
+        result = runner.invoke(
+            app, ["audit", "--config", "/fake/janitor.toml", "-d", "shutoff-instances"]
+        )
+
+    out = _strip_ansi(result.output)
+    assert result.exit_code == 1
+    assert "srv-123" in out
+    assert "disabled in config" in out
+
+
+def test_audit_all_detectors_disabled_exits_two_not_false_all_clear() -> None:
+    """Nothing scanned must never look like "no findings" -- that is a false
+    all-clear for a cron job or CI check reading exit code 0."""
+    detectors = [FakeDetector("unattached-volumes"), FakeDetector("shutoff-instances")]
+    config = Config(
+        disabled=("unattached-volumes", "shutoff-instances"), source="/fake/janitor.toml"
+    )
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch("openstack_janitor.cli.load_config", return_value=config),
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            side_effect=_config_aware_get_detectors(detectors),
+        ),
+    ):
+        result = runner.invoke(app, ["audit", "--config", "/fake/janitor.toml"])
+
+    out = _strip_ansi(result.output)
+    assert result.exit_code == 2
+    assert "No detectors enabled" in out
+    assert "/fake/janitor.toml" in out
+    assert "No findings" not in out
+
+
+def test_select_detectors_reoptions_forced_disabled_detector() -> None:
+    """An explicit -d override must still get its config-file options applied,
+    not just get exempted from the disabled filter."""
+    config = Config(
+        disabled=("old-snapshots",),
+        detector_options={"old-snapshots": {"max_age_days": 30}},
+        source="/fake/janitor.toml",
+    )
+
+    selected = _select_detectors(["old-snapshots"], config)
+
+    assert len(selected) == 1
+    assert isinstance(selected[0], OldSnapshotsDetector)
+    assert selected[0].max_age_days == 30
+
+
+def test_detectors_annotates_disabled_when_config_present() -> None:
+    config = Config(disabled=("orphaned-ports",), source="/fake/janitor.toml")
+    with (
+        patch("openstack_janitor.cli.load_config", return_value=config),
+        patch(
+            "openstack_janitor.cli.get_detectors",
+            return_value=[
+                FakeDetector("unattached-volumes"),
+                FakeDetector("orphaned-ports"),
+            ],
+        ),
+    ):
+        result = runner.invoke(app, ["detectors", "--config", "/fake/janitor.toml"])
+
+    out = _strip_ansi(result.stdout)
+    assert result.exit_code == 0
+    assert "Disabled" in out
+    assert "orphaned-ports" in out
+
+
+def test_detectors_no_disabled_column_without_config() -> None:
+    with patch(
+        "openstack_janitor.cli.get_detectors",
+        return_value=[FakeDetector("unattached-volumes")],
+    ):
+        result = runner.invoke(app, ["detectors"])
+
+    assert result.exit_code == 0
+    assert "Disabled" not in _strip_ansi(result.stdout)
 
 
 def test_audit_long_escapes_markup_in_extra() -> None:

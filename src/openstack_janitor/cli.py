@@ -6,6 +6,7 @@ import dataclasses
 import os
 import sys
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -15,6 +16,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from openstack_janitor.config import Config, ConfigError, load_config
 from openstack_janitor.connection import get_connection
 from openstack_janitor.detectors import get_detectors
 from openstack_janitor.detectors.base import Detector, Finding
@@ -72,18 +74,37 @@ class OutputFormat(str, Enum):
     html = "html"
 
 
-def _select_detectors(detector: Optional[list[str]]) -> list[Detector]:
-    """Resolve `--detector` names to Detector instances.
+def _load_config_or_exit(config_path: Optional[str]) -> Config:
+    """Load janitor.toml (explicit path or auto-discovered); exit 2 on ConfigError."""
+    try:
+        return load_config(Path(config_path) if config_path else None)
+    except ConfigError as exc:
+        error_console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(code=2) from exc
 
-    Returns every registered detector when `detector` is None/empty. Exits
-    with code 2 (after printing the unknown-name error to `error_console`)
-    if any requested name is not registered.
+
+def _select_detectors(
+    detector: Optional[list[str]], config: Optional[Config] = None
+) -> list[Detector]:
+    """Resolve `--detector` names to Detector instances, honoring config disables.
+
+    Returns every non-disabled registered detector when `detector` is
+    None/empty. An explicit `-d <name>` for a detector disabled in config
+    still runs it -- the flag overrides the config toggle, since the user
+    typed it -- but prints a one-line note to `error_console`. Exits with
+    code 2 (after printing the unknown-name error to `error_console`) if any
+    requested name is not registered at all; the valid-names list there
+    includes every registered detector, disabled or not.
     """
-    all_detectors = get_detectors()
+    enabled = get_detectors(config)
     if not detector:
-        return all_detectors
+        return enabled
 
-    by_name = {d.name: d for d in all_detectors}
+    # Disabled is a config toggle, not deregistration: unknown-name detection
+    # and the valid-names list, plus instantiation for an explicit override,
+    # must see (and correctly option) every registered detector.
+    all_config = dataclasses.replace(config, disabled=()) if config else None
+    by_name = {d.name: d for d in get_detectors(all_config)}
     unknown = [name for name in detector if name not in by_name]
     if unknown:
         valid = ", ".join(sorted(by_name)) or "(none registered)"
@@ -91,6 +112,15 @@ def _select_detectors(detector: Optional[list[str]]) -> list[Detector]:
             f"[red]Unknown detector(s): {', '.join(unknown)}. Valid detectors: {valid}[/red]"
         )
         raise typer.Exit(code=2)
+
+    enabled_names = {d.name for d in enabled}
+    for name in detector:
+        if name not in enabled_names:
+            error_console.print(
+                f"[yellow]Note: detector '{name}' is disabled in config; running it "
+                "anyway because it was explicitly requested with --detector.[/yellow]"
+            )
+
     return [by_name[name] for name in detector]
 
 
@@ -125,13 +155,28 @@ def callback() -> None:
 
 
 @app.command()
-def detectors() -> None:
+def detectors(
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        "-C",
+        help="Path to janitor.toml (default: auto-discover).",
+    ),
+) -> None:
     """List registered detectors and their descriptions."""
+    config = _load_config_or_exit(config_path)
+    show_disabled = bool(config.disabled)
+
     table = Table(title="Registered detectors")
     table.add_column("Name", style="cyan")
     table.add_column("Description")
+    if show_disabled:
+        table.add_column("Disabled")
     for det in get_detectors():
-        table.add_row(det.name, det.description)
+        row = [det.name, det.description]
+        if show_disabled:
+            row.append("yes" if det.name in config.disabled else "")
+        table.add_row(*row)
     _out_console().print(table)
 
 
@@ -149,6 +194,12 @@ def audit(
         "-d",
         help="Run only this detector (repeatable). Default: run all registered detectors.",
     ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        "-C",
+        help="Path to janitor.toml (default: auto-discover).",
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.table,
         "--format",
@@ -165,11 +216,24 @@ def audit(
     """Scan the cloud and report orphaned/wasteful resources.
 
     Exit codes: 0 = no findings, 1 = findings were reported (useful for cron
-    jobs), 2 = an unknown --detector name was given, 3 = connecting to the
-    cloud or scanning it failed. Exit-code behavior is the same for every
-    --format.
+    jobs), 2 = an unknown --detector name was given, --config named a file
+    that is missing/invalid, or every detector ended up disabled in config,
+    3 = connecting to the cloud or scanning it failed. Exit-code behavior is
+    the same for every --format.
     """
-    selected = _select_detectors(detector)
+    config = _load_config_or_exit(config_path)
+    selected = _select_detectors(detector, config)
+
+    if not selected:
+        # Every registered detector was disabled in config and none was
+        # explicitly forced back in with -d: reporting "no findings" here
+        # would be a false all-clear (nothing was actually scanned), which
+        # is exactly the wrong thing to print to a cron job or CI check.
+        error_console.print(
+            f"[red]No detectors enabled (all disabled in {escape(config.source)}); "
+            "nothing was scanned.[/red]"
+        )
+        raise typer.Exit(code=2)
 
     try:
         conn = get_connection(cloud)
@@ -223,6 +287,12 @@ def clean(
             "every detector at once."
         ),
     ),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        "-C",
+        help="Path to janitor.toml (default: auto-discover).",
+    ),
     exclude: Optional[list[str]] = typer.Option(
         None,
         "--exclude",
@@ -252,12 +322,12 @@ def clean(
 
     WARNING: this is destructive. Deletes are irreversible. Modes:
 
-    * ``--dry-run`` / ``--dry``: print the plan and exit; nothing is deleted.
+    * --dry-run / --dry: print the plan and exit; nothing is deleted.
     * default: print the plan, prompt for confirmation, delete that set on yes.
-    * ``--yes`` / ``-y``: print the plan and delete without prompting.
+    * --yes / -y: print the plan and delete without prompting.
 
     Within one invocation the printed plan is what gets deleted -- detection
-    runs once. A later ``clean`` run re-detects from scratch.
+    runs once. A later clean run re-detects from scratch.
 
     --detector is required: clean deliberately refuses to act on every
     detector at once, so one command can never delete across all resource
@@ -272,14 +342,20 @@ def clean(
     Deletes are asynchronous in OpenStack: a successful call means the
     delete was accepted, not that the resource is already gone.
 
+    janitor.toml's clean.exclude is a standing keep-list, merged with any
+    --exclude values. Unlike --exclude, a config exclude that matches no
+    finding is not an error -- a keep-list routinely names resources that
+    are not currently flagged.
+
     Exit codes: dry run and declined confirmation exit 0. After deleting: 0
     if every deletion was accepted, 1 if any resource was not deleted --
     either the deletion failed or the detector does not support cleaning
     (failures are isolated per-resource and do not stop the others). 2 =
-    an unknown --detector name, no --detector at all, an --exclude ID that
-    matched nothing, --dry-run combined with --yes, or a confirmation prompt
-    required on a non-interactive terminal. 3 = connecting to the cloud or
-    scanning it failed.
+    an unknown --detector name, no --detector at all, a --config file that
+    is missing/invalid, an --exclude ID that matched nothing, --dry-run
+    combined with --yes, or a confirmation prompt required on a
+    non-interactive terminal. 3 = connecting to the cloud or scanning it
+    failed.
     """
     if dry_run and yes:
         error_console.print(
@@ -287,6 +363,8 @@ def clean(
             "Pass --dry-run to preview only, or --yes to delete without prompting.[/red]"
         )
         raise typer.Exit(code=2)
+
+    config = _load_config_or_exit(config_path)
 
     if not detector:
         valid = ", ".join(sorted(d.name for d in get_detectors())) or "(none registered)"
@@ -296,8 +374,9 @@ def clean(
         )
         raise typer.Exit(code=2)
 
-    selected = _select_detectors(detector)
-    exclude_ids = set(exclude or [])
+    selected = _select_detectors(detector, config)
+    cli_exclude_ids = set(exclude or [])
+    exclude_ids = cli_exclude_ids | set(config.exclude)
 
     try:
         conn = get_connection(cloud)
@@ -320,8 +399,11 @@ def clean(
     # A keep-list entry that matches nothing is almost always a typo (or a
     # name pasted where an ID belongs). Refusing to continue is what keeps a
     # mistyped --exclude from silently deleting the resource it meant to save.
+    # This check is deliberately CLI --exclude only: config.exclude is a
+    # standing keep-list that routinely names resources not currently
+    # flagged, so it must not abort the run.
     detected_ids = {f.resource_id for _, findings in findings_by_detector for f in findings}
-    unmatched = sorted(exclude_ids - detected_ids)
+    unmatched = sorted(cli_exclude_ids - detected_ids)
     if unmatched:
         error_console.print(
             f"[red]--exclude matched no flagged resource: {', '.join(unmatched)}. "

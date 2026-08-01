@@ -10,6 +10,7 @@ from openstack.exceptions import SDKException
 from typer.testing import CliRunner
 
 from openstack_janitor.cli import app
+from openstack_janitor.config import Config, ConfigError
 from openstack_janitor.detectors.base import Detector, Finding
 
 runner = CliRunner()
@@ -494,3 +495,99 @@ def test_clean_no_findings_exits_zero_with_friendly_message() -> None:
 
     assert result.exit_code == 0
     assert "nothing to clean" in result.stdout.lower()
+
+
+def _run_with_config(
+    args: list[str],
+    detectors: list[Any],
+    config: Config,
+    *,
+    input: str | None = None,
+    can_prompt: bool = True,
+):
+    """Like `_run`, but also patches `load_config` to return a fixed Config."""
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch("openstack_janitor.cli.get_detectors", return_value=list(detectors)),
+        patch("openstack_janitor.cli._can_prompt", return_value=can_prompt),
+        patch("openstack_janitor.cli.load_config", return_value=config),
+    ):
+        return runner.invoke(app, args, input=input)
+
+
+def test_clean_config_error_exits_two() -> None:
+    det = FakeDetector("unattached-volumes", [_finding()])
+    with (
+        patch("openstack_janitor.cli.get_detectors", return_value=[det]),
+        patch(
+            "openstack_janitor.cli.load_config",
+            side_effect=ConfigError("/bad/janitor.toml: invalid TOML: boom"),
+        ),
+    ):
+        result = runner.invoke(
+            app, ["clean", "-d", "unattached-volumes", "--config", "/bad/janitor.toml", "--yes"]
+        )
+
+    assert result.exit_code == 2
+    assert "invalid TOML" in result.output
+    assert det.cleaned == []
+
+
+def test_clean_config_exclude_merges_with_cli_exclude() -> None:
+    """A config keep-list is skipped just like a matching -e, with no flag needed."""
+    keep = _finding(resource_id="vol-config-keep")
+    delete = _finding(resource_id="vol-delete")
+    det = FakeDetector("unattached-volumes", [keep, delete])
+    config = Config(exclude=("vol-config-keep",), source="/fake/janitor.toml")
+
+    result = _run_with_config(["clean", "-d", "unattached-volumes", "--yes"], [det], config)
+
+    assert result.exit_code == 0
+    assert det.cleaned == ["vol-delete"]
+    assert "1 skipped" in result.stdout
+
+
+def test_clean_config_exclude_unmatched_does_not_abort() -> None:
+    """A standing keep-list routinely names resources that aren't flagged right now."""
+    det = FakeDetector("unattached-volumes", [_finding(resource_id="vol-1")])
+    config = Config(exclude=("some-other-resource-not-flagged",), source="/fake/janitor.toml")
+
+    result = _run_with_config(["clean", "-d", "unattached-volumes", "--yes"], [det], config)
+
+    assert result.exit_code == 0
+    assert det.cleaned == ["vol-1"]
+
+
+def test_clean_cli_exclude_unmatched_still_aborts_with_config_present() -> None:
+    """A -e typo must still abort even when a (non-matching) config exclude exists."""
+    det = FakeDetector("unattached-volumes", [_finding(resource_id="vol-real")])
+    config = Config(exclude=("vol-real",), source="/fake/janitor.toml")
+
+    result = _run_with_config(
+        ["clean", "-d", "unattached-volumes", "--yes", "--exclude", "typo-not-an-id"],
+        [det],
+        config,
+    )
+
+    assert result.exit_code == 2
+    assert det.cleaned == []
+
+
+def test_clean_config_exclude_unhashable_item_is_config_error_not_crash(tmp_path) -> None:
+    """A nested-list exclude item must fail at config validation with a clean
+    ConfigError, not crash `clean` with an unhashable-type TypeError at the
+    set() union -- and it must do so before any detector is even run."""
+    config_path = tmp_path / "janitor.toml"
+    config_path.write_text("[clean]\nexclude = [[1]]\n", encoding="utf-8")
+    det = FakeDetector("unattached-volumes", [_finding()])
+
+    with patch("openstack_janitor.cli.get_detectors", return_value=[det]):
+        result = runner.invoke(
+            app,
+            ["clean", "-d", "unattached-volumes", "--config", str(config_path), "--yes"],
+        )
+
+    assert result.exit_code == 2
+    assert "exclude" in result.output.lower()
+    assert det.detect_calls == 0
+    assert det.cleaned == []
