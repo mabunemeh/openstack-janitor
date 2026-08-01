@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-27
+
+### Added
+
+- `janitor.toml` configuration file: disable detectors, set per-detector
+  thresholds (`max_age_days`), and keep a standing `clean.exclude` list.
+- `--config` / `-C` on `audit`, `clean`, and `detectors`. Without it,
+  discovery checks `$JANITOR_CONFIG`, then `./janitor.toml`, then
+  `~/.config/janitor/janitor.toml` (`$XDG_CONFIG_HOME` honoured).
+- Validation is strict and fails closed: unknown tables, keys, detector
+  names, or options are errors (exit `2`), never silently ignored — this
+  file feeds a command that deletes things.
+- `clean.exclude` entries are merged with `-e`. An unmatched `-e` still
+  aborts the run (typo protection); an unmatched config entry does not — a
+  standing keep-list routinely names resources that are not currently
+  flagged.
+- An explicit `--detector` runs a config-disabled detector anyway, with a
+  note on stderr: the flag the user typed outranks the file.
+- `audit` exits `2` with an error — not a clean-cloud `0` — when every
+  detector is disabled, so a cron check cannot mistake "nothing scanned"
+  for "nothing found".
+
 ## [0.4.0] - 2026-07-25
 
 ### Changed
@@ -143,6 +165,7 @@ First release: the complete read-only audit story.
 - Non-admin fallback: detectors that use admin-only `all_projects` listings
   retry scoped to the caller's own project when forbidden.
 
+[0.5.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.4.0
 [0.3.1]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.3.1
 [0.3.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.3.0
