@@ -56,7 +56,12 @@ janitor audit -f html > report.html
 janitor audit --long
 ```
 
-Short options: `-c` / `--cloud`, `-d` / `--detector`, `-f` / `--format`, `-h` / `--help`.
+Short options: `-c` / `--cloud`, `-d` / `--detector`, `-C` / `--config`, `-f` / `--format`, `-h` / `--help`.
+
+`--config` / `-C` points at a `janitor.toml`; without it, auto-discovery checks
+(in order) `$JANITOR_CONFIG`, `./janitor.toml`, then
+`~/.config/janitor/janitor.toml` (`$XDG_CONFIG_HOME` honoured). See
+[Configuration](#configuration).
 
 `janitor detectors` lists every registered detector (name and description)
 without connecting to a cloud. Use the names it prints with
@@ -88,8 +93,28 @@ name to run `janitor clean -d <detector>`.
 
 `janitor audit` exits `0` when nothing is found, `1` when findings were
 reported (so it's safe to wire into a cron job or CI check), `2` if an
-unknown `--detector` name is given, and `3` if connecting to the cloud
-fails.
+unknown `--detector` name is given or `--config` names a missing/invalid
+file, and `3` if connecting to the cloud fails.
+
+## Configuration
+
+```toml
+# janitor.toml
+[detectors]
+disabled = ["shutoff-instances"]          # detector names to skip (default: none)
+
+[detectors.old-snapshots]
+max_age_days = 30                          # default 90
+
+[detectors.shutoff-instances]
+max_age_days = 7                           # default 30
+
+[clean]
+exclude = ["vol-0001", "sg-0002"]          # standing keep-list, merged with -e
+```
+
+`--detector` overrides a config-disabled detector; `--exclude` is merged with
+`clean.exclude` rather than replacing it.
 
 ## Cleaning
 
@@ -136,9 +161,10 @@ Tag/age safety rails (e.g. a `janitor:keep` marker) are on the
 execute, `1` if any resource was not deleted during execute — either the
 deletion failed or the detector does not support cleaning (other resources
 are still processed; failures are isolated per resource) — `2` for a missing
-or unknown `--detector`, an `--exclude` ID that matched nothing,
-`--dry-run` combined with `--yes`, or a prompt required on a non-interactive
-terminal, and `3` if connecting to the cloud or scanning it fails.
+or unknown `--detector`, a missing/invalid `--config` file, an `--exclude`
+ID that matched nothing, `--dry-run` combined with `--yes`, or a prompt
+required on a non-interactive terminal, and `3` if connecting to the cloud
+or scanning it fails.
 
 ## Detectors
 
@@ -159,8 +185,8 @@ same detectors also know how to delete what they flag, but only
 Resources without a parseable timestamp are never flagged by the age-based
 detectors. Note that `orphaned-ports` and `unused-security-groups` have no age
 threshold at all, so they can flag a resource created seconds ago — see the
-warning under [Cleaning](#cleaning). Thresholds become configurable once
-`janitor.toml` support lands (see [Roadmap](#roadmap)).
+warning under [Cleaning](#cleaning). `old-snapshots` and `shutoff-instances`
+thresholds are configurable — see [Configuration](#configuration).
 
 ## Authentication
 
@@ -178,8 +204,6 @@ for the full resolution order and file locations.
 
 ## Roadmap
 
-- `janitor.toml` for per-cloud configuration (which detectors run, age
-  thresholds, exclusions).
 - Safety rails: a `janitor:keep` tag (or similar) so resources can be marked
   "do not touch" before `clean` ever deletes anything, beyond today's
   `--exclude` flag and dry-run review.
