@@ -32,6 +32,7 @@ def fake_volume() -> VolumeFactory:
             "status": "available",
             "attachments": [],
             "project_id": "project-0001",
+            "metadata": {},
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
@@ -69,6 +70,7 @@ def fake_port() -> PortFactory:
             "device_id": "",
             "network_id": "net-0001",
             "project_id": "project-0001",
+            "tags": [],
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)

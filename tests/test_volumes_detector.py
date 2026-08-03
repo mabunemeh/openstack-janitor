@@ -73,6 +73,18 @@ def test_name_none_is_handled(fake_conn, fake_volume) -> None:
     assert findings[0].resource_name == ""
 
 
+def test_finding_carries_markers_from_metadata(fake_conn, fake_volume) -> None:
+    vol = fake_volume(
+        status="available", attachments=[], metadata={"janitor:keep": "true", "owner": "team-a"}
+    )
+    fake_conn.block_storage.volumes.return_value = [vol]
+
+    findings = UnattachedVolumesDetector().detect(fake_conn)
+
+    assert len(findings) == 1
+    assert findings[0].markers == ("janitor:keep", "owner")
+
+
 def test_clean_deletes_volume_by_id(fake_conn) -> None:
     finding = Finding(
         resource_type="volume",

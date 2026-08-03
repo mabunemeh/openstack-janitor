@@ -8,6 +8,7 @@ from openstack.connection import Connection
 from openstack.exceptions import ForbiddenException
 
 from openstack_janitor.detectors.base import Detector, Finding
+from openstack_janitor.safety import safety_fields
 
 
 class UnattachedVolumesDetector(Detector):
@@ -34,6 +35,7 @@ class UnattachedVolumesDetector(Detector):
                     resource_name=vol.name or "",
                     project_id=getattr(vol, "project_id", "") or "",
                     reason="volume is unattached (status=available)",
+                    **safety_fields(vol),
                 )
             )
         return findings

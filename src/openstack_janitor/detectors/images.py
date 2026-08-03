@@ -9,6 +9,7 @@ from openstack.connection import Connection
 from openstack.exceptions import ForbiddenException, NotFoundException
 
 from openstack_janitor.detectors.base import Detector, Finding
+from openstack_janitor.safety import safety_fields
 
 _BDM_PROPERTY_KEYS = ("block_device_mapping", "img_block_device_mapping")
 
@@ -169,6 +170,7 @@ class OrphanSnapshotImagesDetector(Detector):
                     project_id=getattr(image, "owner", "") or "",
                     reason=f"image references missing snapshot(s): {', '.join(missing)}",
                     extra=extra,
+                    **safety_fields(image),
                 )
             )
         return findings

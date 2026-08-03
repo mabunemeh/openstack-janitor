@@ -7,6 +7,7 @@ from typing import ClassVar
 from openstack.connection import Connection
 
 from openstack_janitor.detectors.base import Detector, Finding
+from openstack_janitor.safety import safety_fields
 
 
 class OrphanedPortsDetector(Detector):
@@ -41,6 +42,7 @@ class OrphanedPortsDetector(Detector):
                     project_id=getattr(port, "project_id", "") or "",
                     reason="port has no device owner or device id",
                     extra=extra,
+                    **safety_fields(port),
                 )
             )
         return findings

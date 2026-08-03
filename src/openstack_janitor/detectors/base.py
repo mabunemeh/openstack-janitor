@@ -21,6 +21,12 @@ class Finding:
     extra: dict[str, str] = field(default_factory=dict)
     detector: str = ""
     """Kebab-case detector name that flagged this resource (set by audit)."""
+    markers: tuple[str, ...] = ()
+    """Labels found on the resource (tags / metadata keys / image properties);
+    policy looks for the keep marker here."""
+    created_at: str = ""
+    """Raw creation timestamp as the cloud reported it, "" when unknown; the
+    min-age rail refuses to delete what it cannot date."""
 
 
 class Detector(ABC):

@@ -60,6 +60,16 @@ def test_extra_contains_network_id(fake_conn, fake_port) -> None:
     assert findings[0].extra == {"network_id": "net-9999"}
 
 
+def test_finding_carries_markers_from_tags(fake_conn, fake_port) -> None:
+    port = fake_port(device_owner="", device_id="", tags=["janitor:keep", "team-a"])
+    fake_conn.network.ports.return_value = [port]
+
+    findings = OrphanedPortsDetector().detect(fake_conn)
+
+    assert len(findings) == 1
+    assert findings[0].markers == ("janitor:keep", "team-a")
+
+
 def test_clean_deletes_port_by_id(fake_conn) -> None:
     finding = Finding(
         resource_type="port",

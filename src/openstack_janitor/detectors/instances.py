@@ -10,6 +10,7 @@ from openstack.exceptions import ForbiddenException
 
 from openstack_janitor.age import age_in_days
 from openstack_janitor.detectors.base import Detector, Finding
+from openstack_janitor.safety import safety_fields
 
 
 class ShutoffInstancesDetector(Detector):
@@ -66,6 +67,7 @@ class ShutoffInstancesDetector(Detector):
                         f"(threshold {self.max_age_days:.0f})"
                     ),
                     extra=extra,
+                    **safety_fields(server),
                 )
             )
         return findings

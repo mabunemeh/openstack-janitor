@@ -10,6 +10,7 @@ from openstack.exceptions import ForbiddenException
 
 from openstack_janitor.age import age_in_days
 from openstack_janitor.detectors.base import Detector, Finding
+from openstack_janitor.safety import safety_fields
 
 
 class OldSnapshotsDetector(Detector):
@@ -53,6 +54,7 @@ class OldSnapshotsDetector(Detector):
                     project_id=getattr(snap, "project_id", "") or "",
                     reason=(f"snapshot is {age:.0f} days old (threshold {self.max_age_days:.0f})"),
                     extra=extra,
+                    **safety_fields(snap),
                 )
             )
         return findings

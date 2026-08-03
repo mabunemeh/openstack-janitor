@@ -7,6 +7,7 @@ from typing import ClassVar
 from openstack.connection import Connection
 
 from openstack_janitor.detectors.base import Detector, Finding
+from openstack_janitor.safety import safety_fields
 
 
 class UnassociatedFloatingIpsDetector(Detector):
@@ -37,6 +38,7 @@ class UnassociatedFloatingIpsDetector(Detector):
                     project_id=getattr(ip, "project_id", "") or "",
                     reason="floating IP is not associated with any port",
                     extra=extra,
+                    **safety_fields(ip),
                 )
             )
         return findings

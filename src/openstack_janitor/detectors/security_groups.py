@@ -7,6 +7,7 @@ from typing import ClassVar
 from openstack.connection import Connection
 
 from openstack_janitor.detectors.base import Detector, Finding
+from openstack_janitor.safety import safety_fields
 
 
 class UnusedSecurityGroupsDetector(Detector):
@@ -66,6 +67,7 @@ class UnusedSecurityGroupsDetector(Detector):
                     project_id=getattr(group, "project_id", "") or "",
                     reason="security group is not attached to any port or referenced by any rule",
                     extra=extra,
+                    **safety_fields(group),
                 )
             )
         return findings
