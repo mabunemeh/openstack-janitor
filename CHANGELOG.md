@@ -4,6 +4,41 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-08-03
+
+The safety rails `clean` has promised since 0.3.0.
+
+### Added
+
+- **Keep marker.** A resource labelled `janitor:keep` is never deleted. The
+  marker is read from wherever the resource type carries labels — Neutron
+  `tags` (ports, floating IPs, security groups), Cinder `metadata` keys
+  (volumes, snapshots), Glance image `properties`, Nova server tags and
+  metadata. Presence protects regardless of value. The match is exact:
+  case-sensitive and whitespace-sensitive.
+  - There is deliberately **no flag to bypass it**. The way to unprotect a
+    resource is to remove the marker from it.
+  - Configurable via `safety.keep_marker` in `janitor.toml`.
+- **Minimum age floor.** `safety.min_age_days`, or `--min-age-days` on
+  `clean`, refuses to delete anything younger than the floor. A resource
+  whose creation time is missing or unparseable is treated as too new and
+  kept — the tool never deletes what it cannot date.
+- Both rails appear in the plan as `protected` and `too-new`. Neither is a
+  failure: they do not affect the exit code, and a run where everything is
+  protected exits `0` without prompting.
+- Findings now carry `markers` and `created_at`, which adds two keys to
+  `--format json` output (additive).
+
+### Notes
+
+- Both rails are evaluated once, when the plan is built, against a single
+  clock captured for the run. A resource shown as `too-new` therefore cannot
+  cross the floor while the plan is being read and then be deleted on
+  confirmation. Conversely, marking a resource *after* the plan is printed
+  will not save it — abort and re-run.
+- A negative `--min-age-days` is rejected (exit `2`) rather than silently
+  disabling a configured floor.
+
 ## [0.5.0] - 2026-07-27
 
 ### Added
@@ -165,6 +200,7 @@ First release: the complete read-only audit story.
 - Non-admin fallback: detectors that use admin-only `all_projects` listings
   retry scoped to the caller's own project when forbidden.
 
+[0.6.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.6.0
 [0.5.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.4.0
 [0.3.1]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.3.1
