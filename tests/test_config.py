@@ -256,3 +256,107 @@ def test_clean_not_a_table_raises(tmp_path) -> None:
 
     with pytest.raises(ConfigError, match="clean"):
         load_config(path)
+
+
+# --- [safety] --------------------------------------------------------------
+
+
+def test_safety_defaults_when_no_file() -> None:
+    config = load_config()
+
+    assert config.keep_marker == "janitor:keep"
+    assert config.min_age_days == 0.0
+
+
+def test_safety_table_overrides_both_values(tmp_path) -> None:
+    path = _write(
+        tmp_path / "janitor.toml",
+        '[safety]\nkeep_marker = "do-not-delete"\nmin_age_days = 14\n',
+    )
+
+    config = load_config(path)
+
+    assert config.keep_marker == "do-not-delete"
+    assert config.min_age_days == 14.0
+
+
+def test_safety_not_a_table_raises(tmp_path) -> None:
+    path = _write(tmp_path / "janitor.toml", "safety = 5\n")
+
+    with pytest.raises(ConfigError, match="safety"):
+        load_config(path)
+
+
+def test_safety_keep_marker_non_string_raises(tmp_path) -> None:
+    path = _write(tmp_path / "janitor.toml", "[safety]\nkeep_marker = 5\n")
+
+    with pytest.raises(ConfigError, match="keep_marker"):
+        load_config(path)
+
+
+def test_safety_keep_marker_empty_string_raises(tmp_path) -> None:
+    path = _write(tmp_path / "janitor.toml", '[safety]\nkeep_marker = ""\n')
+
+    with pytest.raises(ConfigError, match="keep_marker"):
+        load_config(path)
+
+
+def test_safety_keep_marker_whitespace_only_raises(tmp_path) -> None:
+    path = _write(tmp_path / "janitor.toml", '[safety]\nkeep_marker = "   "\n')
+
+    with pytest.raises(ConfigError, match="keep_marker"):
+        load_config(path)
+
+
+def test_safety_keep_marker_padded_raises(tmp_path) -> None:
+    """A padded marker would load "successfully" and then match no real tag
+    -- resource markers never carry stray whitespace -- silently disabling
+    the rail for anything actually tagged "janitor:keep"."""
+    path = _write(tmp_path / "janitor.toml", '[safety]\nkeep_marker = "janitor:keep "\n')
+
+    with pytest.raises(ConfigError, match="keep_marker"):
+        load_config(path)
+
+
+def test_safety_keep_marker_leading_whitespace_raises(tmp_path) -> None:
+    path = _write(tmp_path / "janitor.toml", '[safety]\nkeep_marker = " janitor:keep"\n')
+
+    with pytest.raises(ConfigError, match="keep_marker"):
+        load_config(path)
+
+
+def test_safety_min_age_days_bool_raises(tmp_path) -> None:
+    """bool is a subclass of int in Python -- must not sneak past the number check."""
+    path = _write(tmp_path / "janitor.toml", "[safety]\nmin_age_days = true\n")
+
+    with pytest.raises(ConfigError, match="min_age_days"):
+        load_config(path)
+
+
+def test_safety_min_age_days_negative_raises(tmp_path) -> None:
+    path = _write(tmp_path / "janitor.toml", "[safety]\nmin_age_days = -1\n")
+
+    with pytest.raises(ConfigError, match="min_age_days"):
+        load_config(path)
+
+
+def test_safety_min_age_days_non_numeric_raises(tmp_path) -> None:
+    path = _write(tmp_path / "janitor.toml", '[safety]\nmin_age_days = "soon"\n')
+
+    with pytest.raises(ConfigError, match="min_age_days"):
+        load_config(path)
+
+
+def test_safety_min_age_days_zero_is_allowed(tmp_path) -> None:
+    path = _write(tmp_path / "janitor.toml", "[safety]\nmin_age_days = 0\n")
+
+    config = load_config(path)
+
+    assert config.min_age_days == 0.0
+
+
+def test_unknown_key_under_safety_raises(tmp_path) -> None:
+    path = _write(tmp_path / "janitor.toml", "[safety]\nbogus = 1\n")
+
+    with pytest.raises(ConfigError, match="bogus"):
+        load_config(path)

@@ -25,6 +25,7 @@ except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib  # type: ignore[no-redef]
 
 from openstack_janitor.detectors import ALL_DETECTORS
+from openstack_janitor.safety import KEEP_MARKER_DEFAULT
 
 _CONFIG_FILENAME = "janitor.toml"
 _ENV_VAR = "JANITOR_CONFIG"
@@ -51,6 +52,16 @@ class Config:
 
     exclude: tuple[str, ...] = ()
     """Standing keep-list of resource IDs, merged with ``clean --exclude``."""
+
+    keep_marker: str = KEEP_MARKER_DEFAULT
+    """Marker that, when present in a finding's ``markers``, protects it from
+    ``clean`` deletion -- reported as "protected", never deleted, no bypass
+    flag."""
+
+    min_age_days: float = 0.0
+    """Minimum resource age (in days) ``clean`` requires before deleting it;
+    ``0`` disables the floor. A resource with no parseable ``created_at``
+    is treated as too new whenever the floor is active."""
 
     source: str = ""
     """Path this config was loaded from; "" means defaults (no file found)."""
@@ -118,7 +129,7 @@ def _parse(data: dict[str, Any], *, source: str) -> Config:
     registry = {cls.name: cls for cls in ALL_DETECTORS}
     valid_names = sorted(registry)
 
-    valid_top = {"detectors", "clean"}
+    valid_top = {"detectors", "clean", "safety"}
     unknown_top = sorted(set(data) - valid_top)
     if unknown_top:
         raise ConfigError(
@@ -140,10 +151,17 @@ def _parse(data: dict[str, Any], *, source: str) -> Config:
         raise ConfigError(f"{source}: [clean] must be a table.")
     exclude = _parse_exclude(clean_table, source=source)
 
+    safety_table = data.get("safety", {})
+    if not isinstance(safety_table, dict):
+        raise ConfigError(f"{source}: [safety] must be a table.")
+    keep_marker, min_age_days = _parse_safety(safety_table, source=source)
+
     return Config(
         disabled=disabled,
         detector_options=detector_options,
         exclude=exclude,
+        keep_marker=keep_marker,
+        min_age_days=min_age_days,
         source=source,
     )
 
@@ -260,6 +278,47 @@ def _parse_exclude(clean_table: dict[str, Any], *, source: str) -> tuple[str, ..
             f"got non-string value(s): {non_str!r}."
         )
     return tuple(exclude_raw)
+
+
+def _parse_safety(safety_table: dict[str, Any], *, source: str) -> tuple[str, float]:
+    valid_keys = {"keep_marker", "min_age_days"}
+    unknown = sorted(set(safety_table) - valid_keys)
+    if unknown:
+        raise ConfigError(
+            f"{source}: unknown key(s) under [safety]: {', '.join(unknown)}. "
+            f"Valid keys: {', '.join(sorted(valid_keys))}."
+        )
+
+    keep_marker = safety_table.get("keep_marker", KEEP_MARKER_DEFAULT)
+    if not isinstance(keep_marker, str) or not keep_marker.strip():
+        # An empty (or whitespace-only) marker would match nothing and
+        # silently disable the keep-marker rail -- that must be a loud
+        # error, not a foot-gun.
+        raise ConfigError(
+            f"{source}: [safety].keep_marker must be a non-empty string, got {keep_marker!r}."
+        )
+    if keep_marker != keep_marker.strip():
+        # A padded value (e.g. "janitor:keep ") would load "successfully"
+        # and then match no real tag/metadata key -- resource markers never
+        # carry stray whitespace -- silently disabling protection for
+        # anything actually tagged "janitor:keep". Reject rather than
+        # guess whether the whitespace was intentional and strip it.
+        raise ConfigError(
+            f"{source}: [safety].keep_marker must not have leading/trailing "
+            f"whitespace, got {keep_marker!r}."
+        )
+
+    min_age_days = safety_table.get("min_age_days", 0.0)
+    if (
+        isinstance(min_age_days, bool)
+        or not isinstance(min_age_days, (int, float))
+        or min_age_days < 0
+    ):
+        raise ConfigError(
+            f"{source}: [safety].min_age_days must be a number >= 0, got {min_age_days!r}."
+        )
+
+    return keep_marker, float(min_age_days)
 
 
 __all__ = ["Config", "ConfigError", "find_config_file", "load_config"]
