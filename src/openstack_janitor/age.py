@@ -1,8 +1,8 @@
 """Shared timestamp-age helper.
 
-Used by age-based detectors (old snapshots, shutoff instances, ...) and will
-also back the future min-age safety rail that gates any destructive "clean"
-action behind a minimum resource age.
+Used by age-based detectors (old snapshots, shutoff instances, ...) and also
+backs the min-age safety rail that gates any destructive "clean" action
+behind a minimum resource age.
 """
 
 from __future__ import annotations
