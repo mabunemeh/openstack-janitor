@@ -22,8 +22,11 @@ class CleanAction:
     resource_name: str
     status: str
     """One of "would-delete" (dry run), "requested", "failed", "skipped",
-    "unsupported" (the detector defines no deletion) or "interrupted" (the run
-    was aborted mid-delete, so the outcome is genuinely unknown).
+    "protected" (the keep marker is present -- never deleted, no bypass),
+    "too-new" (younger than the --min-age-days floor, or undatable while a
+    floor is active), "unsupported" (the detector defines no deletion) or
+    "interrupted" (the run was aborted mid-delete, so the outcome is
+    genuinely unknown).
 
     "requested" rather than "deleted": OpenStack deletes are asynchronous, so
     an accepted call means the delete is under way, not that it has finished.
@@ -207,6 +210,8 @@ def print_clean_plan(
     if not executed:
         would_delete = sum(1 for action in actions if action.status == "would-delete")
         skipped = sum(1 for action in actions if action.status == "skipped")
+        protected = sum(1 for action in actions if action.status == "protected")
+        too_new = sum(1 for action in actions if action.status == "too-new")
         unsupported = sum(1 for action in actions if action.status == "unsupported")
         if dry_run:
             summary = (
@@ -217,6 +222,10 @@ def print_clean_plan(
             summary = f"{would_delete} resource(s) would be deleted."
         if skipped:
             summary += f" {skipped} skipped (excluded)."
+        if protected:
+            summary += f" {protected} protected (keep marker)."
+        if too_new:
+            summary += f" {too_new} too new."
         if unsupported:
             # These cannot be deleted, so never let the advice above imply it.
             summary += f" {unsupported} unsupported (detector cannot delete them)."
@@ -226,15 +235,22 @@ def print_clean_plan(
     requested = sum(1 for action in actions if action.status == "requested")
     failed = sum(1 for action in actions if action.status == "failed")
     skipped = sum(1 for action in actions if action.status == "skipped")
+    protected = sum(1 for action in actions if action.status == "protected")
+    too_new = sum(1 for action in actions if action.status == "too-new")
     unsupported = sum(1 for action in actions if action.status == "unsupported")
     interrupted = sum(1 for action in actions if action.status == "interrupted")
     # Anything that is not a clean success must colour the summary red, so it
-    # can never read green while the command exits non-zero.
+    # can never read green while the command exits non-zero. protected/too-new
+    # are intentional outcomes, not failures, and never colour this red.
     color = "red" if (failed or unsupported or interrupted) else "green"
     summary = (
         f"{requested} deletion(s) requested, {failed} failed, {skipped} skipped, "
         f"{unsupported} unsupported"
     )
+    if protected:
+        summary += f", {protected} protected (keep marker)"
+    if too_new:
+        summary += f", {too_new} too new"
     if interrupted:
         summary += f", {interrupted} interrupted (outcome unknown)"
     console.print(f"[{color}]{summary}.[/{color}]")

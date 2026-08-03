@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -591,3 +592,215 @@ def test_clean_config_exclude_unhashable_item_is_config_error_not_crash(tmp_path
     assert "exclude" in result.output.lower()
     assert det.detect_calls == 0
     assert det.cleaned == []
+
+
+# --- safety rails: keep marker / min-age floor ------------------------------
+
+
+def _recent_timestamp() -> str:
+    """A created_at close enough to "now" to be younger than any positive floor."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _advancing_clock(*instants: datetime) -> type[datetime]:
+    """Build a `datetime` subclass whose `.now()` pops successive `instants`
+    off a shared queue on each call, standing in for the real wall clock so
+    a test can make "time pass" between two `.now()` calls deterministically
+    -- without a real `time.sleep`. `fromisoformat` and everything else is
+    inherited unchanged from the real `datetime`.
+    """
+    queue = list(instants)
+
+    class _FakeDateTime(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            # The last instant is sticky: an extra .now() call must not blow up
+            # with IndexError, or a regression fails for the wrong reason and
+            # hides the assertion message that explains what actually broke.
+            return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    return _FakeDateTime
+
+
+def test_clean_keep_marker_finding_is_never_cleaned() -> None:
+    det = FakeDetector("unattached-volumes", [_finding(markers=("janitor:keep",))])
+
+    result = _run(["clean", "-d", "unattached-volumes", "--yes"], [det])
+
+    assert result.exit_code == 0
+    assert det.cleaned == []
+    assert "protected" in result.stdout.lower()
+
+
+def test_clean_too_new_finding_is_never_cleaned() -> None:
+    det = FakeDetector("unattached-volumes", [_finding(created_at=_recent_timestamp())])
+    config = Config(min_age_days=30.0)
+
+    result = _run_with_config(["clean", "-d", "unattached-volumes", "--yes"], [det], config)
+
+    assert result.exit_code == 0
+    assert det.cleaned == []
+    assert "too-new" in result.stdout
+
+
+def test_clean_missing_created_at_with_active_floor_is_too_new() -> None:
+    """Fail closed: a resource with no usable timestamp is never deleted once
+    a min-age floor is active, rather than assuming it is old enough."""
+    det = FakeDetector("unattached-volumes", [_finding()])  # created_at defaults to ""
+    config = Config(min_age_days=10.0)
+
+    result = _run_with_config(["clean", "-d", "unattached-volumes", "--yes"], [det], config)
+
+    assert result.exit_code == 0
+    assert det.cleaned == []
+    assert "too-new" in result.stdout
+
+
+def test_clean_mixed_age_run_deletes_only_the_eligible_resource() -> None:
+    old = _finding(resource_id="vol-old", created_at="2000-01-01T00:00:00Z")
+    new = _finding(resource_id="vol-new", created_at=_recent_timestamp())
+    det = FakeDetector("unattached-volumes", [old, new])
+    config = Config(min_age_days=30.0)
+
+    result = _run_with_config(["clean", "-d", "unattached-volumes", "--yes"], [det], config)
+
+    assert result.exit_code == 0
+    assert det.cleaned == ["vol-old"]
+
+
+def test_clean_all_protected_run_exits_zero_and_never_prompts() -> None:
+    det = FakeDetector("unattached-volumes", [_finding(markers=("janitor:keep",))])
+
+    # No --yes and no --dry-run: if this tried to prompt without input it
+    # would abort/error rather than exit 0, so a clean 0 here proves the
+    # would-delete==0 short-circuit fired before any prompt was attempted.
+    result = _run(["clean", "-d", "unattached-volumes"], [det])
+
+    assert result.exit_code == 0
+    assert det.cleaned == []
+    assert "proceed with deletion" not in result.stdout.lower()
+
+
+def test_clean_exclude_wins_over_keep_marker() -> None:
+    finding = _finding(resource_id="vol-1", markers=("janitor:keep",))
+    det = FakeDetector("unattached-volumes", [finding])
+
+    result = _run(
+        ["clean", "-d", "unattached-volumes", "--yes", "--exclude", "vol-1"],
+        [det],
+    )
+
+    assert result.exit_code == 0
+    assert det.cleaned == []
+    assert "1 skipped" in result.stdout
+
+
+def test_clean_negative_min_age_days_flag_rejected() -> None:
+    """--min-age-days must be held to the same >= 0 standard as
+    [safety].min_age_days -- otherwise it becomes a way to silently
+    disable a configured floor instead of a documented override."""
+    det = FakeDetector("unattached-volumes", [_finding()])
+    config = Config(min_age_days=365.0)
+
+    result = _run_with_config(
+        ["clean", "-d", "unattached-volumes", "--yes", "--min-age-days", "-1"],
+        [det],
+        config,
+    )
+
+    assert result.exit_code == 2
+    assert det.cleaned == []
+    assert "min-age-days" in result.output.lower() or "min_age_days" in result.output.lower()
+
+
+def test_clean_nan_min_age_days_flag_rejected() -> None:
+    """NaN passes every comparison, so a naive `< 0` guard would let it
+    through and then silently disarm a configured floor at the `> 0` test."""
+    det = FakeDetector("unattached-volumes", [_finding()])
+    config = Config(min_age_days=365.0)
+
+    result = _run_with_config(
+        ["clean", "-d", "unattached-volumes", "--yes", "--min-age-days", "nan"],
+        [det],
+        config,
+    )
+
+    assert result.exit_code == 2
+    assert det.cleaned == []
+
+
+def test_clean_min_age_days_flag_overrides_config() -> None:
+    """--min-age-days must win even when [safety].min_age_days is disabled."""
+    det = FakeDetector("unattached-volumes", [_finding(created_at=_recent_timestamp())])
+    config = Config(min_age_days=0.0)
+
+    result = _run_with_config(
+        ["clean", "-d", "unattached-volumes", "--yes", "--min-age-days", "30"],
+        [det],
+        config,
+    )
+
+    assert result.exit_code == 0
+    assert det.cleaned == []
+    assert "too-new" in result.stdout
+
+
+def test_clean_min_age_uses_one_clock_for_preview_and_execute() -> None:
+    """Regression: age must be computed against ONE `now`, captured before
+    the preview loop, not re-derived (e.g. in the execute loop, after a
+    confirmation prompt). Re-deriving it would let a resource shown
+    "too-new" in the printed plan cross the floor while the user reads the
+    plan or answers the prompt, and then get deleted anyway -- exactly the
+    outcome the rail exists to prevent.
+
+    Needs a second, always-eligible finding alongside the borderline one:
+    with only the borderline finding, the "0 would-delete -> exit before
+    prompting" short-circuit fires in preview and the execute loop -- where
+    the drift bug lives -- never even runs. `vol-old` (created in 2000) is
+    old enough under any plausible clock reading and exists purely to get
+    the run past that short-circuit and into the confirm/execute path,
+    mirroring how the reviewer actually reproduced this: "plan said '1
+    resource(s) would be deleted. 1 too new.' and the execute table showed
+    BOTH as requested."
+
+    Simulates wall-clock time passing between the preview and execute
+    phases with a fake clock (`_advancing_clock`) instead of a real
+    `time.sleep`, so the test is deterministic: the queue yields
+    `before_floor` while the preview is being built and `after_floor` (2
+    minutes later) once execute re-evaluates, for whichever code path
+    actually calls `.now()`.
+
+    Patches `datetime` in both `cli` (where the fix captures `now` once)
+    and `age` (where the pre-fix code silently re-derived it per finding,
+    per loop pass) -- whichever module actually calls `.now()` draws from
+    this same shared queue, so this test fails against the pre-fix code and
+    passes against the fix without needing two different test bodies.
+    """
+    before_floor = datetime(2026, 1, 2, 0, 0, 0, tzinfo=timezone.utc)
+    after_floor = before_floor + timedelta(minutes=2)
+    borderline_created_at = (before_floor - timedelta(hours=23, minutes=59)).isoformat()
+
+    # Pre-fix code calls .now() once per finding, per loop pass (2 findings x
+    # 2 passes = 4 calls); the fix calls it exactly once, total, so only the
+    # first instant is ever consumed. Queueing 4 keeps both code paths safe
+    # from IndexError so the fix/no-fix contrast comes from the *assertions*
+    # below, not an incidental exhausted-queue crash.
+    fake_clock = _advancing_clock(before_floor, before_floor, after_floor, after_floor)
+
+    always_eligible = _finding(resource_id="vol-old", created_at="2000-01-01T00:00:00Z")
+    borderline = _finding(resource_id="vol-borderline", created_at=borderline_created_at)
+    det = FakeDetector("unattached-volumes", [always_eligible, borderline])
+    config = Config(min_age_days=1.0)
+
+    with (
+        patch("openstack_janitor.cli.datetime", fake_clock),
+        patch("openstack_janitor.age.datetime", fake_clock),
+    ):
+        result = _run_with_config(["clean", "-d", "unattached-volumes", "--yes"], [det], config)
+
+    assert result.exit_code == 0
+    assert det.cleaned == ["vol-old"], (
+        "vol-borderline was reported too-new in the printed plan but was deleted anyway -- "
+        "age was re-derived against a later clock reading in the execute loop"
+    )
+    assert "too-new" in result.stdout

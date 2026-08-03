@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import sys
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -16,6 +17,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from openstack_janitor.age import age_in_days
 from openstack_janitor.config import Config, ConfigError, load_config
 from openstack_janitor.connection import get_connection
 from openstack_janitor.detectors import get_detectors
@@ -142,6 +144,46 @@ def _supports_clean(det: Detector) -> bool:
 def _can_prompt() -> bool:
     """Whether stdin can accept an interactive confirmation prompt."""
     return sys.stdin.isatty()
+
+
+def _plan_status(
+    finding: Finding,
+    det: Detector,
+    *,
+    exclude_ids: set[str],
+    keep_marker: str,
+    min_age_days: float,
+    now: datetime,
+) -> str:
+    """Classify `finding` before any deletion is attempted.
+
+    Precedence: ``--exclude`` > keep marker > min-age floor > detector
+    support. The preview and execute loops both call this with the SAME
+    `now`, captured once per invocation before the preview loop runs, so
+    they can never disagree about which findings are eligible for deletion
+    -- the printed plan is what gets deleted. Recomputing age against a
+    fresh wall clock in the execute loop would let a resource that is
+    "too-new" in the printed plan cross the floor while the user is
+    reading it (or answering the confirmation prompt) and then get
+    deleted -- exactly the outcome this rail exists to prevent.
+
+    There is deliberately no way to bypass the keep marker here: the only
+    way to unprotect a resource is to remove the marker from it in the
+    cloud.
+    """
+    if finding.resource_id in exclude_ids:
+        return "skipped"
+    if keep_marker in finding.markers:
+        return "protected"
+    if min_age_days > 0:
+        age = age_in_days(finding.created_at, now=now)
+        # Fail closed: a resource we cannot date is never deleted once a
+        # floor is active, rather than assuming it is old enough.
+        if age is None or age < min_age_days:
+            return "too-new"
+    if not _supports_clean(det):
+        return "unsupported"
+    return "would-delete"
 
 
 @app.callback()
@@ -317,6 +359,11 @@ def clean(
             "the plan and prompts before deleting (unless --dry-run)."
         ),
     ),
+    min_age_days: Optional[float] = typer.Option(
+        None,
+        "--min-age-days",
+        help="Minimum resource age in days before deleting (overrides safety.min_age_days).",
+    ),
 ) -> None:
     """Delete resources flagged by the given detectors.
 
@@ -331,10 +378,22 @@ def clean(
 
     --detector is required: clean deliberately refuses to act on every
     detector at once, so one command can never delete across all resource
-    types. Note that some detectors have no age threshold (orphaned-ports,
-    unused-security-groups), so they can flag resources created seconds
-    ago -- prefer --exclude and narrow --detector until tag/age safety
-    rails (janitor:keep) land.
+    types. Note that some detectors have no age threshold of their own
+    (orphaned-ports, unused-security-groups), so they can flag resources
+    created seconds ago -- narrow --detector and lean on the safety rails
+    below for those.
+
+    Safety rails, applied before anything is deleted: a resource carrying
+    the keep marker (a tag, a metadata key, or an image property key --
+    default "janitor:keep", configurable via safety.keep_marker) is
+    never deleted and is reported "protected" instead. There is
+    deliberately no flag to bypass this -- the only way to unprotect a
+    resource is to remove the marker from it in the cloud. --min-age-days
+    (or safety.min_age_days; the flag overrides the config value)
+    additionally refuses to delete anything younger than the floor,
+    reporting it "too-new" -- a resource with no usable creation
+    timestamp is treated as too new whenever a floor is active, since
+    what cannot be dated cannot be proven old enough.
 
     Findings are detected fresh for this run -- clean never acts on stale
     findings from an earlier `audit` run.
@@ -350,12 +409,14 @@ def clean(
     Exit codes: dry run and declined confirmation exit 0. After deleting: 0
     if every deletion was accepted, 1 if any resource was not deleted --
     either the deletion failed or the detector does not support cleaning
-    (failures are isolated per-resource and do not stop the others). 2 =
+    (failures are isolated per-resource and do not stop the others).
+    Resources skipped, protected by the keep marker, or too new are
+    intentional outcomes, not failures, and never affect the exit code. 2 =
     an unknown --detector name, no --detector at all, a --config file that
-    is missing/invalid, an --exclude ID that matched nothing, --dry-run
-    combined with --yes, or a confirmation prompt required on a
-    non-interactive terminal. 3 = connecting to the cloud or scanning it
-    failed.
+    is missing/invalid, an --exclude ID that matched nothing, a negative
+    --min-age-days, --dry-run combined with --yes, or a confirmation prompt
+    required on a non-interactive terminal. 3 = connecting to the cloud or
+    scanning it failed.
     """
     if dry_run and yes:
         error_console.print(
@@ -377,6 +438,20 @@ def clean(
     selected = _select_detectors(detector, config)
     cli_exclude_ids = set(exclude or [])
     exclude_ids = cli_exclude_ids | set(config.exclude)
+    keep_marker = config.keep_marker
+    effective_min_age_days = config.min_age_days if min_age_days is None else min_age_days
+    if not effective_min_age_days >= 0:
+        # Negated rather than `< 0` so NaN is rejected too: NaN passes every
+        # comparison, so it would slip through and then fail the `> 0` test
+        # that arms the rail -- silently disabling a configured floor, which
+        # is the exact failure this check exists to prevent.
+        # safety.min_age_days already rejects negatives at config-load time;
+        # --min-age-days must be held to the same standard, or the two layers
+        # disagree about what is valid.
+        error_console.print(
+            f"[red]--min-age-days must be a number >= 0, got {effective_min_age_days!r}.[/red]"
+        )
+        raise typer.Exit(code=2)
 
     try:
         conn = get_connection(cloud)
@@ -422,16 +497,25 @@ def clean(
             status=status,
         )
 
+    # Captured ONCE, before the preview loop, and reused for the execute loop
+    # below: recomputing age against a fresh wall clock in the execute loop
+    # would let a resource shown "too-new" in the printed plan cross the
+    # floor while the user reads the plan or answers the confirmation
+    # prompt, and then get deleted -- exactly what this rail exists to stop.
+    now = datetime.now(timezone.utc)
+
     # Preview from this detection pass -- the same findings are deleted later.
     preview: list[CleanAction] = []
     for det, findings in findings_by_detector:
         for finding in findings:
-            if finding.resource_id in exclude_ids:
-                status = "skipped"
-            elif _supports_clean(det):
-                status = "would-delete"
-            else:
-                status = "unsupported"
+            status = _plan_status(
+                finding,
+                det,
+                exclude_ids=exclude_ids,
+                keep_marker=keep_marker,
+                min_age_days=effective_min_age_days,
+                now=now,
+            )
             preview.append(_action(finding, status))
 
     console = _out_console()
@@ -452,7 +536,7 @@ def clean(
             )
             raise typer.Exit(code=2)
         if not typer.confirm("Proceed with deletion?"):
-            console.print("Aborted — nothing was deleted.")
+            console.print("Aborted â€” nothing was deleted.")
             raise typer.Exit(code=0)
 
     actions: list[CleanAction] = []
@@ -461,9 +545,15 @@ def clean(
     try:
         for det, findings in findings_by_detector:
             for finding in findings:
-                if finding.resource_id in exclude_ids:
-                    status = "skipped"
-                elif not _supports_clean(det):
+                status = _plan_status(
+                    finding,
+                    det,
+                    exclude_ids=exclude_ids,
+                    keep_marker=keep_marker,
+                    min_age_days=effective_min_age_days,
+                    now=now,
+                )
+                if status == "unsupported":
                     # Preview already marked these unsupported; still report
                     # them on execute so the record matches what was shown.
                     any_failed = True
@@ -471,8 +561,7 @@ def clean(
                         f"[red]{escape(det.name)} does not support clean; "
                         f"{escape(finding.resource_id)} left alone.[/red]"
                     )
-                    status = "unsupported"
-                else:
+                elif status == "would-delete":
                     try:
                         det.clean(conn, finding)
                     except NotImplementedError:
