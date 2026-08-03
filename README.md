@@ -4,9 +4,10 @@
 
 A CLI that audits an OpenStack cloud for orphaned and wasteful resources.
 
-**Status: early development.** Seven detectors and a `clean` command are
-working — see [Detectors](#detectors) and [Cleaning](#cleaning); more
-detectors and safety rails are coming — see [Roadmap](#roadmap).
+**Status: early development.** Seven detectors, a `clean` command, and
+keep-marker/min-age safety rails are working — see [Detectors](#detectors)
+and [Cleaning](#cleaning); more detectors are on the
+[roadmap](#roadmap).
 
 ## Install
 
@@ -111,10 +112,15 @@ max_age_days = 7                           # default 30
 
 [clean]
 exclude = ["vol-0001", "sg-0002"]          # standing keep-list, merged with -e
+
+[safety]
+keep_marker = "janitor:keep"               # default; see Cleaning
+min_age_days = 7                           # default 0 (disabled)
 ```
 
 `--detector` overrides a config-disabled detector; `--exclude` is merged with
-`clean.exclude` rather than replacing it.
+`clean.exclude` rather than replacing it; `--min-age-days` overrides
+`[safety].min_age_days`.
 
 ## Cleaning
 
@@ -135,10 +141,10 @@ so a single command can never delete across all seven resource types.
 
 Read this before deleting:
 
-- **Some detectors have no age threshold.** `orphaned-ports` and
+- **Some detectors have no age threshold of their own.** `orphaned-ports` and
   `unused-security-groups` flag by state alone, so a port or group created
-  seconds ago — mid-provisioning, mid-CI-run — is a finding and will be
-  deleted. Until tag/age rails land, keep `--detector` narrow.
+  seconds ago — mid-provisioning, mid-CI-run — is a finding. Keep
+  `--detector` narrow, or lean on `--min-age-days` / the keep marker below.
 - **Within one invocation the printed plan is what gets deleted.** Detection
   runs once; confirmation or `--yes` acts on that same set. A later `clean`
   run re-detects from scratch.
@@ -154,17 +160,38 @@ Read this before deleting:
 - **Non-interactive terminals need `--yes` or `--dry-run`.** Bare `clean`
   refuses to prompt when stdin is not a TTY (for example in CI).
 
-Tag/age safety rails (e.g. a `janitor:keep` marker) are on the
-[roadmap](#roadmap) but not implemented yet.
+**Safety rails**, applied before anything is deleted:
+
+- **Keep marker.** A resource tagged, or carrying a metadata/image-property
+  key, matching `janitor:keep` (configurable via `[safety].keep_marker`) is
+  never deleted — reported `protected` instead. The match is exact —
+  case-sensitive and whitespace-sensitive, so `Janitor:Keep` or
+  `janitor:keep ` will *not* protect a resource. There is deliberately no
+  flag to bypass this: to unprotect a resource, remove the marker from it
+  in the cloud, e.g. `openstack server unset --tag janitor:keep <id>` or
+  `openstack volume unset --property janitor:keep <id>`.
+- **Minimum age.** `--min-age-days` (or `[safety].min_age_days`, which the
+  flag overrides) refuses to delete anything younger than the floor —
+  reported `too-new`. A resource with no usable creation timestamp is
+  treated as too new whenever a floor is set, since what can't be dated
+  can't be proven old enough.
+
+Both rails are evaluated once, when the plan is built (printed by the
+preview), and that evaluation is what `clean` acts on — not a re-check
+right before each delete. Tagging a resource with the keep marker *after*
+its plan is printed will not save it; abort (answer "no", or Ctrl-C) and
+re-run `clean` instead.
 
 `janitor clean` exits `0` on a successful dry run, declined confirmation, or
 execute, `1` if any resource was not deleted during execute — either the
 deletion failed or the detector does not support cleaning (other resources
 are still processed; failures are isolated per resource) — `2` for a missing
 or unknown `--detector`, a missing/invalid `--config` file, an `--exclude`
-ID that matched nothing, `--dry-run` combined with `--yes`, or a prompt
-required on a non-interactive terminal, and `3` if connecting to the cloud
-or scanning it fails.
+ID that matched nothing, a negative `--min-age-days`, `--dry-run` combined
+with `--yes`, or a prompt required on a non-interactive terminal, and `3`
+if connecting to the cloud
+or scanning it fails. `protected` and `too-new` resources are intentional
+outcomes, not failures, and never affect the exit code.
 
 ## Detectors
 
@@ -204,6 +231,4 @@ for the full resolution order and file locations.
 
 ## Roadmap
 
-- Safety rails: a `janitor:keep` tag (or similar) so resources can be marked
-  "do not touch" before `clean` ever deletes anything, beyond today's
-  `--exclude` flag and dry-run review.
+- More detectors for other orphaned/wasteful resource types.
