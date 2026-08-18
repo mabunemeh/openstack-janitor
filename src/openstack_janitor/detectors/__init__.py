@@ -17,7 +17,10 @@ from openstack_janitor.detectors.instances import ShutoffInstancesDetector
 from openstack_janitor.detectors.ports import OrphanedPortsDetector
 from openstack_janitor.detectors.security_groups import UnusedSecurityGroupsDetector
 from openstack_janitor.detectors.snapshots import OldSnapshotsDetector
-from openstack_janitor.detectors.volumes import UnattachedVolumesDetector
+from openstack_janitor.detectors.volumes import (
+    UnattachedVolumesDetector,
+    UnattachedVolumesNoSnapshotsDetector,
+)
 
 if TYPE_CHECKING:
     # Deferred to avoid a circular import: config.py imports this module (to
@@ -28,6 +31,7 @@ if TYPE_CHECKING:
 
 ALL_DETECTORS: list[type[Detector]] = [
     UnattachedVolumesDetector,
+    UnattachedVolumesNoSnapshotsDetector,
     UnassociatedFloatingIpsDetector,
     OrphanedPortsDetector,
     OldSnapshotsDetector,
