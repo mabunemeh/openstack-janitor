@@ -4,6 +4,24 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-08-12
+
+### Added
+
+- `unattached-volumes-no-snapshots` detector — the subset of
+  `unattached-volumes` that is actually safe to delete. Cinder refuses to
+  delete a volume that still has snapshots, so those are reported by
+  `unattached-volumes` but excluded here. Use it with `clean -d` when you want
+  deletions that will not bounce off dependent snapshots. Thanks @pczarnik
+  (#11).
+
+### Notes
+
+- The two volume detectors overlap by design: an unattached volume with no
+  snapshots is reported by both, so a default `janitor audit` lists it twice
+  (the **Detector** column shows which found it). Pass `-d` to run just one,
+  or disable one via `detectors.disabled` in `janitor.toml`.
+
 ## [0.6.0] - 2026-08-03
 
 The safety rails `clean` has promised since 0.3.0.
@@ -200,6 +218,7 @@ First release: the complete read-only audit story.
 - Non-admin fallback: detectors that use admin-only `all_projects` listings
   retry scoped to the caller's own project when forbidden.
 
+[0.7.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.7.0
 [0.6.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.6.0
 [0.5.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.5.0
 [0.4.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.4.0
