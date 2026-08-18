@@ -4,7 +4,7 @@
 
 A CLI that audits an OpenStack cloud for orphaned and wasteful resources.
 
-**Status: early development.** Seven detectors, a `clean` command, and
+**Status: early development.** Eight detectors, a `clean` command, and
 keep-marker/min-age safety rails are working — see [Detectors](#detectors)
 and [Cleaning](#cleaning); more detectors are on the
 [roadmap](#roadmap).
@@ -198,6 +198,7 @@ outcomes, not failures, and never affect the exit code.
 | Name | Flags |
 | --- | --- |
 | `unattached-volumes` | Volumes in `available` status with no attachments. |
+| `unattached-volumes-no-snapshots` | Volumes in `available` status with no attachments **and** no dependent snapshots. A narrower, safe-to-delete subset of `unattached-volumes`: Cinder refuses to delete a volume that still has snapshots, so those are excluded here. Useful for the unnamed volumes left behind after removing VM snapshots. |
 | `unassociated-floating-ips` | Floating IPs not associated with any port. |
 | `orphaned-ports` | Ports with no device owner and no device id. Infrastructure ports (DHCP, routers, load balancer VIPs) always carry one of these, so they are never flagged; a pre-created port awaiting attachment will be. |
 | `old-snapshots` | Volume snapshots older than a threshold (default 90 days). |
