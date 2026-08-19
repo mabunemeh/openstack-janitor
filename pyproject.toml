@@ -25,6 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "mypy",
     "pytest",
     "pytest-cov",
     "ruff",
@@ -56,3 +57,21 @@ keep-runtime-typing = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=openstack_janitor --cov-report=term-missing --cov-fail-under=80"
+
+[tool.mypy]
+# Analyze at 3.11: the runtime supports 3.9+, but mypy 2.x only analyzes
+# 3.10+, and 3.11 is where the stdlib `tomllib` used in config.py exists (the
+# `tomli` backport branch is the <3.11 path). The type surface we exercise is
+# identical across these versions.
+python_version = "3.11"
+# Strict for the shipped package: this is the code that deletes cloud
+# resources, so it earns the full check.
+files = ["src"]
+strict = true
+
+# tomli (the <3.11 tomllib backport) is not installed on the interpreters we
+# type-check with, and it ships no stubs; the import is already guarded and
+# ignored at the call site.
+[[tool.mypy.overrides]]
+module = "tomli"
+ignore_missing_imports = true

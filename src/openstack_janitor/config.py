@@ -230,7 +230,11 @@ def _validate_options(
     would be accepted as bogus option names and later blow up at
     instantiation with a confusing ``TypeError``.
     """
-    sig = inspect.signature(detector_cls.__init__)
+    # Introspecting the constructor signature is the whole point here -- we
+    # restrict config options to what __init__ accepts. mypy flags accessing
+    # __init__ on the class as unsound (a subclass could override it), which is
+    # exactly the signature we want to read.
+    sig = inspect.signature(detector_cls.__init__)  # type: ignore[misc]
     skip_kinds = (
         inspect.Parameter.KEYWORD_ONLY,
         inspect.Parameter.VAR_POSITIONAL,

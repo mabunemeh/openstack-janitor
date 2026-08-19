@@ -28,5 +28,8 @@ jobs:
       - name: Lint (ruff format)
         run: ruff format --check .
 
+      - name: Type check (mypy)
+        run: mypy
+
       - name: Test
         run: pytest
