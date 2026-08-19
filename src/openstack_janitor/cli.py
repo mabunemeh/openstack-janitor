@@ -12,6 +12,7 @@ from typing import Optional
 
 import typer
 from keystoneauth1.exceptions import ClientException as KeystoneAuthException
+from openstack.connection import Connection
 from openstack.exceptions import SDKException
 from rich.console import Console
 from rich.markup import escape
@@ -83,6 +84,41 @@ def _load_config_or_exit(config_path: Optional[str]) -> Config:
     except ConfigError as exc:
         error_console.print(f"[red]{escape(str(exc))}[/red]")
         raise typer.Exit(code=2) from exc
+
+
+def _connect_or_exit(cloud: Optional[str]) -> Connection:
+    """Build the cloud Connection; print and exit 3 on any connection failure.
+
+    Both `audit` and `clean` document exit code 3 for "connecting to the cloud
+    ... failed"; centralizing the connect + error message + exit code here
+    keeps the two commands from drifting apart.
+    """
+    try:
+        return get_connection(cloud)
+    except CLOUD_ERRORS as exc:
+        error_console.print(f"[red]Failed to connect to OpenStack cloud: {escape(str(exc))}[/red]")
+        raise typer.Exit(code=3) from exc
+
+
+def _detect_or_exit(
+    selected: list[Detector], conn: Connection
+) -> list[tuple[Detector, list[Finding]]]:
+    """Run every selected detector; print and exit 3 if any scan fails.
+
+    Returns each detector paired with its findings so `clean` can bind the
+    later delete to the exact detector that flagged each resource. `audit`
+    flattens this and stamps `finding.detector` itself. Detection is eager
+    (the list comprehension runs every detector before returning) so a scan
+    failure aborts before any output or deletion -- for `clean`, a detection
+    failure must delete nothing.
+    """
+    try:
+        return [(det, det.detect(conn)) for det in selected]
+    except CLOUD_ERRORS as exc:
+        error_console.print(
+            f"[red]Failed to scan the cloud for resources: {escape(str(exc))}[/red]"
+        )
+        raise typer.Exit(code=3) from exc
 
 
 def _select_detectors(
@@ -277,22 +313,13 @@ def audit(
         )
         raise typer.Exit(code=2)
 
-    try:
-        conn = get_connection(cloud)
-    except CLOUD_ERRORS as exc:
-        error_console.print(f"[red]Failed to connect to OpenStack cloud: {escape(str(exc))}[/red]")
-        raise typer.Exit(code=3) from exc
+    conn = _connect_or_exit(cloud)
 
-    try:
-        findings = []
-        for det in selected:
-            for finding in det.detect(conn):
-                findings.append(dataclasses.replace(finding, detector=det.name))
-    except CLOUD_ERRORS as exc:
-        error_console.print(
-            f"[red]Failed to scan the cloud for resources: {escape(str(exc))}[/red]"
-        )
-        raise typer.Exit(code=3) from exc
+    findings = [
+        dataclasses.replace(finding, detector=det.name)
+        for det, det_findings in _detect_or_exit(selected, conn)
+        for finding in det_findings
+    ]
 
     if output_format is OutputFormat.json:
         # Machine-readable: use plain print(), never the rich console -- rich
@@ -453,23 +480,11 @@ def clean(
         )
         raise typer.Exit(code=2)
 
-    try:
-        conn = get_connection(cloud)
-    except CLOUD_ERRORS as exc:
-        error_console.print(f"[red]Failed to connect to OpenStack cloud: {escape(str(exc))}[/red]")
-        raise typer.Exit(code=3) from exc
+    conn = _connect_or_exit(cloud)
 
-    try:
-        # Detect everything up front: a detection failure must delete nothing.
-        # One pass binds the preview to any later delete in this invocation.
-        findings_by_detector: list[tuple[Detector, list[Finding]]] = [
-            (det, det.detect(conn)) for det in selected
-        ]
-    except CLOUD_ERRORS as exc:
-        error_console.print(
-            f"[red]Failed to scan the cloud for resources: {escape(str(exc))}[/red]"
-        )
-        raise typer.Exit(code=3) from exc
+    # Detect everything up front: a detection failure must delete nothing.
+    # One pass binds the preview to any later delete in this invocation.
+    findings_by_detector = _detect_or_exit(selected, conn)
 
     # A keep-list entry that matches nothing is almost always a typo (or a
     # name pasted where an ID belongs). Refusing to continue is what keeps a
