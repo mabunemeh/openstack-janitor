@@ -18,11 +18,11 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from openstack_janitor.age import age_in_days
 from openstack_janitor.config import Config, ConfigError, load_config
 from openstack_janitor.connection import get_connection
 from openstack_janitor.detectors import get_detectors
 from openstack_janitor.detectors.base import Detector, Finding
+from openstack_janitor.planning import UNSUPPORTED, WOULD_DELETE, plan_status
 from openstack_janitor.reporting import (
     CleanAction,
     print_clean_plan,
@@ -162,64 +162,9 @@ def _select_detectors(
     return [by_name[name] for name in detector]
 
 
-def _supports_clean(det: Detector) -> bool:
-    """Whether `det` defines deletion, i.e. does not inherit the base stub.
-
-    Resolves per-instance assignment (``det.clean = fn``) as well as class-body
-    overrides: previewing "unsupported" for something `--yes` would really
-    delete is the dangerous direction to be wrong in.
-
-    This reports whether `clean` is *defined*, not whether it will succeed -- a
-    detector may override `clean` and still raise NotImplementedError, in which
-    case the preview says "would-delete" and the execute reports "unsupported".
-    """
-    method = getattr(det.clean, "__func__", det.clean)
-    return method is not Detector.clean
-
-
 def _can_prompt() -> bool:
     """Whether stdin can accept an interactive confirmation prompt."""
     return sys.stdin.isatty()
-
-
-def _plan_status(
-    finding: Finding,
-    det: Detector,
-    *,
-    exclude_ids: set[str],
-    keep_marker: str,
-    min_age_days: float,
-    now: datetime,
-) -> str:
-    """Classify `finding` before any deletion is attempted.
-
-    Precedence: ``--exclude`` > keep marker > min-age floor > detector
-    support. The preview and execute loops both call this with the SAME
-    `now`, captured once per invocation before the preview loop runs, so
-    they can never disagree about which findings are eligible for deletion
-    -- the printed plan is what gets deleted. Recomputing age against a
-    fresh wall clock in the execute loop would let a resource that is
-    "too-new" in the printed plan cross the floor while the user is
-    reading it (or answering the confirmation prompt) and then get
-    deleted -- exactly the outcome this rail exists to prevent.
-
-    There is deliberately no way to bypass the keep marker here: the only
-    way to unprotect a resource is to remove the marker from it in the
-    cloud.
-    """
-    if finding.resource_id in exclude_ids:
-        return "skipped"
-    if keep_marker in finding.markers:
-        return "protected"
-    if min_age_days > 0:
-        age = age_in_days(finding.created_at, now=now)
-        # Fail closed: a resource we cannot date is never deleted once a
-        # floor is active, rather than assuming it is old enough.
-        if age is None or age < min_age_days:
-            return "too-new"
-    if not _supports_clean(det):
-        return "unsupported"
-    return "would-delete"
 
 
 @app.callback()
@@ -523,7 +468,7 @@ def clean(
     preview: list[CleanAction] = []
     for det, findings in findings_by_detector:
         for finding in findings:
-            status = _plan_status(
+            status = plan_status(
                 finding,
                 det,
                 exclude_ids=exclude_ids,
@@ -536,7 +481,7 @@ def clean(
     console = _out_console()
     print_clean_plan(preview, console, executed=False, detected=detected, dry_run=dry_run)
 
-    would_delete = sum(1 for action in preview if action.status == "would-delete")
+    would_delete = sum(1 for action in preview if action.status == WOULD_DELETE)
     if would_delete == 0:
         raise typer.Exit(code=0)
 
@@ -560,7 +505,7 @@ def clean(
     try:
         for det, findings in findings_by_detector:
             for finding in findings:
-                status = _plan_status(
+                status = plan_status(
                     finding,
                     det,
                     exclude_ids=exclude_ids,
@@ -568,7 +513,7 @@ def clean(
                     min_age_days=effective_min_age_days,
                     now=now,
                 )
-                if status == "unsupported":
+                if status == UNSUPPORTED:
                     # Preview already marked these unsupported; still report
                     # them on execute so the record matches what was shown.
                     any_failed = True
@@ -576,7 +521,7 @@ def clean(
                         f"[red]{escape(det.name)} does not support clean; "
                         f"{escape(finding.resource_id)} left alone.[/red]"
                     )
-                elif status == "would-delete":
+                elif status == WOULD_DELETE:
                     try:
                         det.clean(conn, finding)
                     except NotImplementedError:
@@ -586,7 +531,7 @@ def clean(
                             f"[red]{escape(det.name)} does not support clean; "
                             f"{escape(finding.resource_id)} left alone.[/red]"
                         )
-                        status = "unsupported"
+                        status = UNSUPPORTED
                     except Exception as exc:  # noqa: BLE001 - isolate per resource
                         any_failed = True
                         # Name the exception type so a bug in janitor is not
