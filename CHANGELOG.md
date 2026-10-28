@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `old-unused-images` detector — private and shared Glance images older than
+  `max_age_days` (default 180) that no server boots from. It never flags
+  public, community or protected images, a shelved server's shelve snapshot,
+  or an image another image uses as its `kernel_id` / `ramdisk_id`. Shared
+  images are only flagged when the server list covers every project.
+
+### Changed
+
+- Internal: shared connect/scan helpers in the CLI, and the clean-plan safety
+  rails moved into a `planning` module. Thanks @pczarnik (#12).
+- CI runs strict mypy and tests against Python 3.14. Thanks @pczarnik (#13).
+
 ## [0.7.0] - 2026-08-12
 
 ### Added
@@ -218,6 +234,7 @@ First release: the complete read-only audit story.
 - Non-admin fallback: detectors that use admin-only `all_projects` listings
   retry scoped to the caller's own project when forbidden.
 
+[Unreleased]: https://github.com/mabunemeh/openstack-janitor/compare/v0.7.0...HEAD
 [0.7.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.7.0
 [0.6.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.6.0
 [0.5.0]: https://github.com/mabunemeh/openstack-janitor/releases/tag/v0.5.0

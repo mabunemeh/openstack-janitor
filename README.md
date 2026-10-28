@@ -4,7 +4,7 @@
 
 A CLI that audits an OpenStack cloud for orphaned and wasteful resources.
 
-**Status: early development.** Eight detectors, a `clean` command, and
+**Status: early development.** Nine detectors, a `clean` command, and
 keep-marker/min-age safety rails are working — see [Detectors](#detectors)
 and [Cleaning](#cleaning); more detectors are on the
 [roadmap](#roadmap).
@@ -110,6 +110,9 @@ max_age_days = 30                          # default 90
 [detectors.shutoff-instances]
 max_age_days = 7                           # default 30
 
+[detectors.old-unused-images]
+max_age_days = 365                         # default 180
+
 [clean]
 exclude = ["vol-0001", "sg-0002"]          # standing keep-list, merged with -e
 
@@ -149,7 +152,9 @@ Read this before deleting:
   runs once; confirmation or `--yes` acts on that same set. A later `clean`
   run re-detects from scratch.
 - **Cleaning can create new findings.** Deleting a shutoff instance leaves its
-  volumes unattached; deleting snapshots orphans the images built from them.
+  volumes unattached; deleting snapshots orphans the images built from them,
+  and deleting a volume-backed image leaves its volume snapshots behind
+  (`old-unused-images` lists them under `snapshot_ids`).
   The next run will flag those. Re-read each plan rather than looping
   `--yes` blindly.
 - **`--exclude` takes resource IDs, not names.** An `--exclude` value that
@@ -205,6 +210,7 @@ outcomes, not failures, and never affect the exit code.
 | `shutoff-instances` | Instances in `SHUTOFF` status whose last update is older than a threshold (default 30 days). There is no "shutoff since" field in the Compute API, so the age is a conservative lower bound — the detector may under-report but never over-reports. |
 | `unused-security-groups` | Security groups not attached to any port and not referenced as a `remote_group_id` by any rule. The per-project `default` group is always skipped. |
 | `orphan-snapshot-images` | Glance images whose `block_device_mapping` references a Cinder volume snapshot that no longer exists. Includes hidden images. |
+| `old-unused-images` | Private and shared images older than a threshold (default 180 days) that nothing uses. An image is in use when a server boots from it, when it is a shelved server's shelve snapshot (deleting that would destroy the server), or when another image names it as `kernel_id` / `ramdisk_id`. Public, community and protected images are never flagged. Shared images are only flagged when you can list every project's servers (admin); otherwise another project could be using them unseen. Volumes created from an image do not count as using it. Includes hidden images. |
 
 Detection is always read-only — `janitor audit` never modifies anything. The
 same detectors also know how to delete what they flag, but only
@@ -213,8 +219,8 @@ same detectors also know how to delete what they flag, but only
 Resources without a parseable timestamp are never flagged by the age-based
 detectors. Note that `orphaned-ports` and `unused-security-groups` have no age
 threshold at all, so they can flag a resource created seconds ago — see the
-warning under [Cleaning](#cleaning). `old-snapshots` and `shutoff-instances`
-thresholds are configurable — see [Configuration](#configuration).
+warning under [Cleaning](#cleaning). `old-snapshots`, `shutoff-instances` and
+`old-unused-images` thresholds are configurable — see [Configuration](#configuration).
 
 ## Authentication
 
