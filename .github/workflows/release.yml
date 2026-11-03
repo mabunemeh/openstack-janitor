@@ -51,7 +51,7 @@ jobs:
     steps:
       - name: Install build prerequisites
         run: dnf install -y python3.12 python3.12-pip git-core binutils
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install package and PyInstaller
         run: |
           python3.12 -m pip install --upgrade pip
