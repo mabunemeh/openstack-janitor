@@ -276,7 +276,11 @@ def test_audit_connect_failure_exits_three() -> None:
 
 
 def test_audit_scan_connect_failure_exits_three() -> None:
-    """A keystoneauth1 failure mid-scan (expired token) must also exit 3."""
+    """A keystoneauth1 failure mid-scan must exit 3 and say it failed to connect.
+
+    The connection is lazy, so an unreachable cloud or bad credentials first
+    fail inside a detector; "failed to scan" would misdescribe that.
+    """
     det = FakeDetector("unattached-volumes")
     det.detect = MagicMock(side_effect=ConnectFailure("connection reset"))  # type: ignore[method-assign]
 
@@ -286,8 +290,27 @@ def test_audit_scan_connect_failure_exits_three() -> None:
     ):
         result = runner.invoke(app, ["audit"])
 
+    output = _strip_ansi(result.output)
     assert result.exit_code == 3
-    assert "Failed to scan the cloud for resources" in _strip_ansi(result.output)
+    assert "Failed to connect to OpenStack cloud" in output
+    assert "Failed to scan" not in output
+
+
+def test_audit_scan_sdk_failure_keeps_scan_wording() -> None:
+    """An openstacksdk error mid-scan is a scan failure: exit 3, scan wording."""
+    det = FakeDetector("unattached-volumes")
+    det.detect = MagicMock(side_effect=SDKException("compute unreachable"))  # type: ignore[method-assign]
+
+    with (
+        patch("openstack_janitor.cli.get_connection", return_value=MagicMock()),
+        patch("openstack_janitor.cli.get_detectors", return_value=[det]),
+    ):
+        result = runner.invoke(app, ["audit"])
+
+    output = _strip_ansi(result.output)
+    assert result.exit_code == 3
+    assert "Failed to scan the cloud for resources" in output
+    assert "Failed to connect" not in output
 
 
 def test_audit_format_json_with_findings_parses_and_exits_one() -> None:

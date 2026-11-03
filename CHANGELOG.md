@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- An unreachable cloud, DNS failure or bad credentials now reports "Failed to
+  connect to OpenStack cloud" instead of "Failed to scan the cloud for
+  resources". The exit code (3) is unchanged.
+
+### Changed
+
+- CI and release workflows use the Node 24 majors of the GitHub actions.
+
 ## [0.8.0] - 2026-10-28
 
 ### Added

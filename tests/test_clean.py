@@ -487,6 +487,7 @@ def test_clean_detect_connect_failure_deletes_nothing_and_exits_three() -> None:
 
     assert result.exit_code == 3
     assert det.cleaned == []
+    assert "Failed to connect to OpenStack cloud" in result.output
 
 
 def test_clean_no_findings_exits_zero_with_friendly_message() -> None:

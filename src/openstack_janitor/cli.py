@@ -111,10 +111,17 @@ def _detect_or_exit(
     (the list comprehension runs every detector before returning) so a scan
     failure aborts before any output or deletion -- for `clean`, a detection
     failure must delete nothing.
+
+    `get_connection` is lazy, so authentication and the first network round
+    trip happen here, inside a detector. A keystoneauth1 error at this point
+    is a connection failure, not a scan failure, and is worded as one.
     """
     try:
         return [(det, det.detect(conn)) for det in selected]
-    except CLOUD_ERRORS as exc:
+    except KeystoneAuthException as exc:
+        error_console.print(f"[red]Failed to connect to OpenStack cloud: {escape(str(exc))}[/red]")
+        raise typer.Exit(code=3) from exc
+    except SDKException as exc:
         error_console.print(
             f"[red]Failed to scan the cloud for resources: {escape(str(exc))}[/red]"
         )
